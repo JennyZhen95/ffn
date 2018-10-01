@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Driver script for FFN training.
+"""Driver script for FFN training with horovod.
 
 The FFN is first run on single seed point. The mask prediction for that seed
 point is then used to train subsequent steps of the FFN by moving the field
@@ -58,6 +58,13 @@ from ffn.training import augmentation
 # pylint: disable=unused-import
 from ffn.training import optimizer
 # pylint: enable=unused-import
+
+import horovod.tensorflow as hvd
+import sys
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+rank = comm.rank
 
 FLAGS = flags.FLAGS
 
@@ -277,7 +284,8 @@ class EvalTracker(object):
     predicted = (predicted[selector] * 255).astype(np.uint8)
 
     pre_patches = patches[selector]
-    patches = ((pre_patches - np.min(pre_patches[:]) ) / (np.max(pre_patches[:]) - np.min(pre_patches[:])) * 255).astype(np.uint8)
+    patches = ((pre_patches - np.min(pre_patches[:]) ) / 
+      (np.max(pre_patches[:]) - np.min(pre_patches[:])) * 255).astype(np.uint8)
 
     im = PIL.Image.fromarray(np.concatenate([labels, predicted,
                                              patches], axis=1), 'L')
@@ -291,6 +299,7 @@ class EvalTracker(object):
         image=tf.Summary.Image(
             height=h, width=w * 3, colorspace=1,  # greyscale
             encoded_image_string=buf.getvalue()))
+
   def add_patch_v2(self, labels, predicted, weights,
                 coord=None, volname=None, patches=None):
     """Evaluates single-object segmentation quality."""
@@ -319,6 +328,7 @@ class EvalTracker(object):
     self.images_xy.append(self.slice_image_v2(labels, predicted, patches, 0))
     self.images_xz.append(self.slice_image_v2(labels, predicted, patches, 1))
     self.images_yz.append(self.slice_image_v2(labels, predicted, patches, 2))
+
   def get_summaries(self):
     """Gathers tensorflow summaries into single list."""
 
@@ -426,12 +436,12 @@ def define_data_input(model, queue_batch=None):
   label_volume_map = {}
   for vol in FLAGS.label_volumes.split(','):
     volname, path, dataset = vol.split(':')
-    label_volume_map[volname] = h5py.File(path)[dataset]
+    label_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
   image_volume_map = {}
   for vol in FLAGS.data_volumes.split(','):
     volname, path, dataset = vol.split(':')
-    image_volume_map[volname] = h5py.File(path)[dataset]
+    image_volume_map[volname] = h5py.File(path, 'r')[dataset]
 
   if queue_batch is None:
     queue_batch = FLAGS.batch_size
@@ -506,6 +516,214 @@ def define_data_input(model, queue_batch=None):
 
   return patches, labels, loss_weights, coord, volname
 
+
+def read_h5_sources():
+  """Read h5 file once, assuming training data can fit in memory"""
+  image_volume_map = {}
+  for vol in FLAGS.data_volumes.split(','):
+    volname, path, dataset = vol.split(':')
+    image_volume_map[volname] = h5py.File(path, 'r')[dataset]
+
+  label_volume_map = {}
+  for vol in FLAGS.label_volumes.split(','):
+    volname, path, dataset = vol.split(':')
+    label_volume_map[volname] = h5py.File(path, 'r')[dataset]
+  return image_volume_map, label_volume_map
+
+def parser(proto):
+  examples = tf.parse_single_example(proto, features=dict(
+      center=tf.FixedLenFeature(shape=[1, 3], dtype=tf.int64),
+      label_volume_name=tf.FixedLenFeature(shape=[1], dtype=tf.string),
+  ))
+  coord = examples['center']
+  volname = examples['label_volume_name']
+  return coord, volname
+  # return coord
+def h5_distributed_dataset(model, queue_batch=None, rank=0):
+  if queue_batch is None:
+    queue_batch = FLAGS.batch_size
+  image_volume_map = {}
+  for vol in FLAGS.data_volumes.split(','):
+    volname, path, dataset = vol.split(':')
+    image_volume_map[volname] = h5py.File(path, 'r')[dataset]
+
+  label_volume_map = {}
+  for vol in FLAGS.label_volumes.split(','):
+    volname, path, dataset = vol.split(':')
+    label_volume_map[volname] = h5py.File(path, 'r')[dataset]
+  # if queue_batch is None:
+  #   queue_batch = FLAGS.batch_size
+
+  # Fetch sizes of images and labels
+  label_size = train_labels_size(model)
+  image_size = train_image_size(model)
+
+  label_radii = (label_size // 2).tolist()
+  label_size = label_size.tolist()
+  image_radii = (image_size // 2).tolist()
+  image_size = image_size.tolist()
+
+  # Fetch a single coordinate and volume name from a queue reading the
+  # coordinate files or from saved hard/important examples
+  # coord, volname = inputs.load_patch_coordinates(FLAGS.train_coords)
+  ds = tf.data.TFRecordDataset([FLAGS.train_coords], compression_type='GZIP')
+  ds = ds.map(parser)
+  ds = ds.shard(hvd.size(), hvd.rank())
+  value = ds.make_one_shot_iterator().get_next()
+  print(value)
+  # coord = value
+  # volname = 'snemi'
+  coord, volname = value
+
+  # Load object labels (segmentation).
+  labels = inputs.load_from_numpylike(
+      coord, volname, label_size, label_volume_map)
+
+  label_shape = [1] + label_size[::-1] + [1]
+  labels = tf.reshape(labels, label_shape)
+
+  loss_weights = tf.constant(np.ones(label_shape, dtype=np.float32))
+
+  # Load image data.
+  patch = inputs.load_from_numpylike(
+      coord, volname, image_size, image_volume_map)
+  data_shape = [1] + image_size[::-1] + [1]
+  patch = tf.reshape(patch, shape=data_shape)
+
+  if ((FLAGS.image_stddev is None or FLAGS.image_mean is None) and
+      not FLAGS.image_offset_scale_map):
+    raise ValueError('--image_mean, --image_stddev or --image_offset_scale_map '
+                    'need to be defined')
+
+  # Convert segmentation into a soft object mask.
+  lom = tf.logical_and(
+      labels > 0,
+      tf.equal(labels, labels[0,
+                              label_radii[2],
+                              label_radii[1],
+                              label_radii[0],
+                              0]))
+  labels = inputs.soften_labels(lom)
+
+  # Apply basic augmentations.
+  transform_axes = augmentation.PermuteAndReflect(
+      rank=5, permutable_axes=_get_permutable_axes(),
+      reflectable_axes=_get_reflectable_axes())
+  labels = transform_axes(labels)
+  patch = transform_axes(patch)
+  loss_weights = transform_axes(loss_weights)
+
+  # Normalize image data.
+  patch = inputs.offset_and_scale_patches(
+      patch, volname[0],
+      offset_scale_map=_get_offset_and_scale_map(),
+      default_offset=FLAGS.image_mean,
+      default_scale=FLAGS.image_stddev)
+
+  # Create a batch of examples. Note that any TF operation before this line
+  # will be hidden behind a queue, so expensive/slow ops can take advantage
+  # of multithreading.
+  patches, labels, loss_weights = tf.train.shuffle_batch(
+      [patch, labels, loss_weights], queue_batch,
+      num_threads=max(1, FLAGS.batch_size // 2),
+      capacity=32 * FLAGS.batch_size,
+      min_after_dequeue=4 * FLAGS.batch_size,
+      enqueue_many=True)
+
+  return (patches, labels, loss_weights, coord, volname)
+
+
+def define_distributed_data_input(model, 
+                                  queue_batch=None):
+  """Adds TF ops to load input data."""
+                                  # image_volume_map, 
+                                  # label_volume_map, 
+  if queue_batch is None:
+    queue_batch = FLAGS.batch_size
+
+  def gen():
+    image_volume_map = {}
+    for vol in FLAGS.data_volumes.split(','):
+      volname, path, dataset = vol.split(':')
+      image_volume_map[volname] = h5py.File(path, 'r')[dataset]
+
+    label_volume_map = {}
+    for vol in FLAGS.label_volumes.split(','):
+      volname, path, dataset = vol.split(':')
+      label_volume_map[volname] = h5py.File(path, 'r')[dataset]
+    # if queue_batch is None:
+    #   queue_batch = FLAGS.batch_size
+
+    # Fetch sizes of images and labels
+    label_size = train_labels_size(model)
+    image_size = train_image_size(model)
+
+    label_radii = (label_size // 2).tolist()
+    label_size = label_size.tolist()
+    image_radii = (image_size // 2).tolist()
+    image_size = image_size.tolist()
+
+    # Fetch a single coordinate and volume name from a queue reading the
+    # coordinate files or from saved hard/important examples
+    coord, volname = inputs.load_patch_coordinates(FLAGS.train_coords)
+
+    # Load object labels (segmentation).
+    labels = inputs.load_from_numpylike(
+        coord, volname, label_size, label_volume_map)
+
+    label_shape = [1] + label_size[::-1] + [1]
+    labels = tf.reshape(labels, label_shape)
+
+    loss_weights = tf.constant(np.ones(label_shape, dtype=np.float32))
+
+    # Load image data.
+    patch = inputs.load_from_numpylike(
+        coord, volname, image_size, image_volume_map)
+    data_shape = [1] + image_size[::-1] + [1]
+    patch = tf.reshape(patch, shape=data_shape)
+
+    if ((FLAGS.image_stddev is None or FLAGS.image_mean is None) and
+        not FLAGS.image_offset_scale_map):
+      raise ValueError('--image_mean, --image_stddev or --image_offset_scale_map '
+                      'need to be defined')
+
+    # Convert segmentation into a soft object mask.
+    lom = tf.logical_and(
+        labels > 0,
+        tf.equal(labels, labels[0,
+                                label_radii[2],
+                                label_radii[1],
+                                label_radii[0],
+                                0]))
+    labels = inputs.soften_labels(lom)
+
+    # Apply basic augmentations.
+    transform_axes = augmentation.PermuteAndReflect(
+        rank=5, permutable_axes=_get_permutable_axes(),
+        reflectable_axes=_get_reflectable_axes())
+    labels = transform_axes(labels)
+    patch = transform_axes(patch)
+    loss_weights = transform_axes(loss_weights)
+
+    # Normalize image data.
+    patch = inputs.offset_and_scale_patches(
+        patch, volname[0],
+        offset_scale_map=_get_offset_and_scale_map(),
+        default_offset=FLAGS.image_mean,
+        default_scale=FLAGS.image_stddev)
+
+    # Create a batch of examples. Note that any TF operation before this line
+    # will be hidden behind a queue, so expensive/slow ops can take advantage
+    # of multithreading.
+    patches, labels, loss_weights = tf.train.shuffle_batch(
+        [patch, labels, loss_weights], queue_batch,
+        num_threads=max(1, FLAGS.batch_size // 2),
+        capacity=32 * FLAGS.batch_size,
+        min_after_dequeue=4 * FLAGS.batch_size,
+        enqueue_many=True)
+
+    yield (patches, labels, loss_weights, coord, volname)
+  return gen
 
 def prepare_ffn(model):
   """Creates the TF graph for an FFN."""
@@ -681,104 +899,168 @@ def save_flags():
           f.write('%s\n' % flag.serialize())
 
 
+def gen():
+  for i in itertools.count(1):
+    yield i
+    # yield (i, [1] * i)
+
 def train_ffn(model_cls, **model_kwargs):
+  hvd.init()
+  logging.info('Rank: %d %d' % (hvd.rank(), rank))
   with tf.Graph().as_default():
-    with tf.device(tf.train.replica_device_setter(FLAGS.ps_tasks, merge_devices=True)):
+    # with tf.device(tf.train.replica_device_setter(FLAGS.ps_tasks, merge_devices=True)):
       # The constructor might define TF ops/placeholders, so it is important
       # that the FFN is instantiated within the current context.
-      model = model_cls(**model_kwargs)
-      eval_shape_zyx = train_eval_size(model).tolist()[::-1]
+    model = model_cls(**model_kwargs)
+    eval_shape_zyx = train_eval_size(model).tolist()[::-1]
 
-      eval_tracker = EvalTracker(eval_shape_zyx)
-      load_data_ops = define_data_input(model, queue_batch=1)
-      prepare_ffn(model)
-      merge_summaries_op = tf.summary.merge_all()
+    eval_tracker = EvalTracker(eval_shape_zyx)
+    # with tf.device('/cpu:0'):
+    # image_volume_map, label_volume_map = read_h5_sources()
+    # print(define_data_input(model, queue_batch=3))
+    # # print(define_data_input(model, queue_batch=1))
+    # ds = tf.data.Dataset.from_generator(
+    #   define_distributed_data_input(model, queue_batch=3),
+    #   output_types=(tf.float32, tf.float32, tf.float32, tf.int64, tf.string))
+    #   # output_shapes=tf.TensorShape([]))
+    # # ds = tf.data.Dataset.from_generator(gen, 
+    # #   output_types=tf.int64, output_shapes=tf.TensorShape([]))
+    # ds = ds.shard(hvd.size(), hvd.rank())
+    # value = ds.make_one_shot_iterator().get_next()
+    # logging.info('sharded %s', value)
+    # value = hvd.broadcast(value, root_rank=0, name='input_group')
+    # print(value)
+      # print(load_data_ops)
+    
+    load_data_ops = h5_distributed_dataset(model, queue_batch=1)
+    # load_data_ops = define_data_input(model, queue_batch=1)
+    print(load_data_ops)
+    # sess = tf.Session()
+    # for epoch in range(0,100):
+    #   result = sess.run(load_data_ops)
+    #   logging.info('curr_result %d %d' % (result[0], hvd.rank()))
 
-      if FLAGS.task == 0:
-        save_flags()
 
-      # Start supervisor.
-      sv = tf.train.Supervisor(
-          logdir=FLAGS.train_dir,
-          is_chief=(FLAGS.task == 0),
-          saver=model.saver,
-          summary_op=None,
-          save_summaries_secs=FLAGS.summary_rate_secs,
-          save_model_secs=300,
-          recovery_wait_secs=5)
-      sess = sv.prepare_or_wait_for_session(
-          FLAGS.master,
-          config=tf.ConfigProto(
-              log_device_placement=False, allow_soft_placement=True))
-      eval_tracker.sess = sess
 
-      if FLAGS.task > 0:
-        # To avoid early instabilities when using multiple replicas, we use
-        # a launch schedule where new replicas are brought online gradually.
-        logging.info('Delaying replica start.')
-        while True:
-          if (int(sess.run(model.global_step)) >= FLAGS.replica_step_delay *
-              FLAGS.task):
-            break
-          time.sleep(5.0)
 
-      fov_shifts = list(model.shifts)  # x, y, z
-      if FLAGS.shuffle_moves:
-        random.shuffle(fov_shifts)
+    # sys.exit()
+    prepare_ffn(model)
+    merge_summaries_op = tf.summary.merge_all()
 
-      policy_map = {
-          'fixed': partial(fixed_offsets, fov_shifts=fov_shifts),
-          'max_pred_moves': max_pred_offsets
-      }
-      batch_it = get_batch(lambda: sess.run(load_data_ops),
-                           eval_tracker, model, FLAGS.batch_size,
-                           policy_map[FLAGS.fov_policy])
+    if FLAGS.task == 0:
+      save_flags()
+   
+    hooks = [
+      # Horovod: BroadcastGlobalVariablesHook broadcasts initial variable states
+      # from rank 0 to all other processes. This is necessary to ensure consistent
+      # initialization of all workers when training is started with random weights
+      # or restored from a checkpoint.
+      hvd.BroadcastGlobalVariablesHook(0),
 
-      step = 0
-      t_last = time.time()
+      # Horovod: adjust number of steps based on number of GPUs.
+      # tf.train.StopAtStepHook(last_step=20000 // hvd.size()),
 
-      while step < FLAGS.max_steps:
-        # Run summaries periodically.
-        t_curr = time.time()
-        if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
-          summ_op = merge_summaries_op
-          t_last = t_curr
-        else:
-          summ_op = None
+      # tf.train.LoggingTensorHook(tensors={'step': global_step, 'loss': loss},
+      #                             every_n_iter=10),
+    ]
+ 
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    config.gpu_options.visible_device_list = str(hvd.local_rank())
+    checkpoint_dir = FLAGS.train_dir if hvd.rank() == 0 else None
 
-        seed, patches, labels, weights = next(batch_it)
+    # sess = tf.train.MonitoredTrainingSession(
+    #     is_chief=(FLAGS.task == 0),
+    #     checkpoint_dir=checkpoint_dir,
+    #     hooks=hooks,
+    #     save_checkpoint_secs=30,
+    #     save_summaries_secs=FLAGS.summary_rate_secs,
+    #     config=config,
+    #     )
+    # Start supervisor.
+    sv = tf.train.Supervisor(
+        logdir=checkpoint_dir,
+        is_chief=(FLAGS.task == 0),
+        saver=model.saver,
+        summary_op=None,
+        save_summaries_secs=FLAGS.summary_rate_secs,
+        save_model_secs=300,
+        recovery_wait_secs=5)
+    sess = sv.prepare_or_wait_for_session(
+        FLAGS.master,
+        config=config)
+        # config=tf.ConfigProto(
+        #     log_device_placement=False, allow_soft_placement=True))
+    eval_tracker.sess = sess
 
-        summaries = []
-        updated_seed, step, summ = run_training_step(
-            sess, model, summ_op,
-            feed_dict={
-                model.loss_weights: weights,
-                model.labels: labels,
-                model.offset_label: 'off',
-                model.input_patches: patches,
-                model.input_seed: seed,
-            })
+    if FLAGS.task > 0:
+      # To avoid early instabilities when using multiple replicas, we use
+      # a launch schedule where new replicas are brought online gradually.
+      logging.info('Delaying replica start.')
+      while True:
+        if (int(sess.run(model.global_step)) >= FLAGS.replica_step_delay *
+            FLAGS.task):
+          break
+        time.sleep(5.0)
 
-        # Save prediction results in the original seed array so that
-        # they can be used in subsequent steps.
-        mask.update_at(seed, (0, 0, 0), updated_seed)
+    fov_shifts = list(model.shifts)  # x, y, z
+    if FLAGS.shuffle_moves:
+      random.shuffle(fov_shifts)
 
-        if summ is not None:
-          summaries.append(tf.Summary.FromString(summ))
+    policy_map = {
+        'fixed': partial(fixed_offsets, fov_shifts=fov_shifts),
+        'max_pred_moves': max_pred_offsets
+    }
+    batch_it = get_batch(lambda: sess.run(load_data_ops),
+                          eval_tracker, model, FLAGS.batch_size,
+                          policy_map[FLAGS.fov_policy])
 
-        # Record summaries.
-        if FLAGS.task == 0 and summ_op is not None:
-          # Compute a loss over the whole training patch (i.e. more than a
-          # single-step field of view of the network). This quantifies the
-          # quality of the final object mask.
-          logging.info('Saving summaries.')
-          summ = tf.Summary()
-          summ.value.extend(eval_tracker.get_summaries())
-          eval_tracker.reset()
+    step = 0
+    t_last = time.time()
 
-          for s in summaries:
-            summ.value.extend(s.value)
-          sv.summary_computed(sess, summ, step)
+    while step < FLAGS.max_steps:
+      # Run summaries periodically.
+      t_curr = time.time()
+      if t_curr - t_last > FLAGS.summary_rate_secs and FLAGS.task == 0:
+        summ_op = merge_summaries_op
+        t_last = t_curr
+      else:
+        summ_op = None
+
+      seed, patches, labels, weights = next(batch_it)
+
+      summaries = []
+      updated_seed, step, summ = run_training_step(
+          sess, model, summ_op,
+          feed_dict={
+              model.loss_weights: weights,
+              model.labels: labels,
+              model.offset_label: 'off',
+              model.input_patches: patches,
+              model.input_seed: seed,
+          })
+
+      # Save prediction results in the original seed array so that
+      # they can be used in subsequent steps.
+      mask.update_at(seed, (0, 0, 0), updated_seed)
+
+      if summ is not None:
+        summaries.append(tf.Summary.FromString(summ))
+
+      # Record summaries.
+      if hvd.rank() == 0 and summ_op is not None:
+        # if FLAGS.task == 0 and summ_op is not None:
+        # Compute a loss over the whole training patch (i.e. more than a
+        # single-step field of view of the network). This quantifies the
+        # quality of the final object mask.
+        logging.info('Saving summaries.')
+        summ = tf.Summary()
+        summ.value.extend(eval_tracker.get_summaries())
+        eval_tracker.reset()
+
+        for s in summaries:
+          summ.value.extend(s.value)
+        sv.summary_computed(sess, summ, step)
 
 
 def main(argv=()):

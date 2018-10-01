@@ -21,40 +21,14 @@ from __future__ import print_function
 import tensorflow as tf
 
 from .. import model
+from . import convstack_3d
+from .. import optimizer
+from tensorflow.python.util import deprecation
+import horovod.tensorflow as hvd
 
 # Note: this model was originally trained with conv3d layers initialized with
 # TruncatedNormalInitializedVariable with stddev = 0.01.
-def _predict_object_mask(net, depth=9):
-  """Computes single-object mask prediction."""
-  conv = tf.contrib.layers.conv3d
-  with tf.contrib.framework.arg_scope([conv], num_outputs=32,
-                                      kernel_size=(3, 3, 3),
-                                      padding='SAME'):
-    net = conv(net, scope='conv0_a')
-    net = conv(net, scope='conv0_b', activation_fn=None)
-
-    for i in range(1, depth):
-      with tf.name_scope('residual%d' % i):
-        in_net = net
-        net = tf.nn.relu(net)
-        net = conv(net, scope='conv%d_a' % i)
-        net = conv(net, scope='conv%d_b' % i, activation_fn=None)
-        net += in_net
-
-  net = tf.nn.relu(net)
-  logits = conv(net, 1, (1, 1, 1), activation_fn=None, scope='conv_lom')
-
-  return logits
-
-
-class ConvStack3DFFNModel(model.FFNModel):
-  dim = 3
-
-  def __init__(self, fov_size=None, deltas=None, batch_size=None, depth=9):
-    super(ConvStack3DFFNModel, self).__init__(deltas, batch_size)
-    self.set_uniform_io_size(fov_size)
-    self.depth = depth
-
+class HorovodConvStack3DFFNModel(convstack_3d.ConvStack3DFFNModel):
   def define_tf_graph(self):
     self.show_center_slice(self.input_seed)
 
@@ -66,7 +40,7 @@ class ConvStack3DFFNModel(model.FFNModel):
     net = tf.concat([self.input_patches, self.input_seed], 4)
 
     with tf.variable_scope('seed_update', reuse=False):
-      logit_update = _predict_object_mask(net, self.depth)
+      logit_update = convstack_3d._predict_object_mask(net, self.depth)
 
     logit_seed = self.update_seed(self.input_seed, logit_update)
 
@@ -80,5 +54,42 @@ class ConvStack3DFFNModel(model.FFNModel):
       self.show_center_slice(logit_seed)
       self.show_center_slice(self.labels, sigmoid=False)
       self.add_summaries()
-
     self.saver = tf.train.Saver(keep_checkpoint_every_n_hours=1)
+
+  def set_up_optimizer(self, loss=None, max_gradient_entry_mag=0.7):
+    """Sets up the training op for the model."""
+    if loss is None:
+      loss = self.loss
+    tf.summary.scalar('optimizer_loss', self.loss)
+
+    opt = optimizer.optimizer_from_flags()
+    opt = hvd.DistributedOptimizer(opt)
+    grads_and_vars = opt.compute_gradients(loss)
+
+    for g, v in grads_and_vars:
+      if g is None:
+        tf.logging.error('Gradient is None: %s', v.op.name)
+
+    if max_gradient_entry_mag > 0.0:
+      grads_and_vars = [(tf.clip_by_value(g,
+                                          -max_gradient_entry_mag,
+                                          +max_gradient_entry_mag), v)
+                        for g, v, in grads_and_vars]
+
+    # TODO(b/34707785): Hopefully remove need for these deprecated calls.  Let
+    # one warning through so that we have some (low) possibility of noticing if
+    # the message changes.
+    trainables = tf.trainable_variables()
+    if trainables:
+      var = trainables[0]
+      tf.contrib.deprecated.histogram_summary(var.op.name, var)
+    with deprecation.silence():
+      for var in trainables[1:]:
+        tf.contrib.deprecated.histogram_summary(var.op.name, var)
+      for grad, var in grads_and_vars:
+        tf.contrib.deprecated.histogram_summary(
+            'gradients/' + var.op.name, grad)
+
+    self.train_op = opt.apply_gradients(grads_and_vars,
+                                        global_step=self.global_step,
+                                        name='train')
