@@ -249,77 +249,6 @@ class EvalTracker(object):
     self.images_xz.append(self.slice_image(labels, predicted, weights, 1))
     self.images_yz.append(self.slice_image(labels, predicted, weights, 2))
 
-  def slice_image_v2(self, labels, predicted, patches, slice_axis):
-    """Builds a tf.Summary showing a slice of an object mask.
-
-    The object mask slice is shown side by side with the corresponding
-    ground truth mask.
-
-    Args:
-      labels: ndarray of ground truth data, shape [1, z, y, x, 1]
-      predicted: ndarray of predicted data, shape [1, z, y, x, 1]
-      patches: ndarray of patches data, shape [1, z, y, x, 1]
-      slice_axis: axis in the middle of which to place the cutting plane
-          for which the summary image will be generated, valid values are
-          2 ('x'), 1 ('y'), and 0 ('z').
-
-    Returns:
-      tf.Summary.Value object with the image.
-    """
-    zyx = list(labels.shape[1:-1])
-    selector = [0, slice(None), slice(None), slice(None), 0]
-    selector[slice_axis + 1] = zyx[slice_axis] // 2
-
-    del zyx[slice_axis]
-    h, w = zyx
-
-    buf = BytesIO()
-    labels = (labels[selector] * 255).astype(np.uint8)
-    predicted = (predicted[selector] * 255).astype(np.uint8)
-
-    pre_patches = patches[selector]
-    patches = ((pre_patches - np.min(pre_patches[:]) ) / (np.max(pre_patches[:]) - np.min(pre_patches[:])) * 255).astype(np.uint8)
-
-    im = PIL.Image.fromarray(np.concatenate([labels, predicted,
-                                             patches], axis=1), 'L')
-    im.save(buf, 'PNG')
-
-    axis_names = 'zyx'
-    axis_names = axis_names.replace(axis_names[slice_axis], '')
-
-    return tf.Summary.Value(
-        tag='final_%s' % axis_names[::-1],
-        image=tf.Summary.Image(
-            height=h, width=w * 3, colorspace=1,  # greyscale
-            encoded_image_string=buf.getvalue()))
-  def add_patch_v2(self, labels, predicted, weights,
-                coord=None, volname=None, patches=None):
-    """Evaluates single-object segmentation quality."""
-
-    predicted = mask.crop_and_pad(predicted, (0, 0, 0), self._eval_shape)
-    patches = mask.crop_and_pad(patches, (0, 0, 0), self._eval_shape)
-    labels = mask.crop_and_pad(labels, (0, 0, 0), self._eval_shape)
-    loss, = self.sess.run([self.eval_loss], {self.eval_labels: labels,
-                                             self.eval_preds: predicted})
-    self.loss += loss
-    self.total_voxels += labels.size
-    self.masked_voxels += np.sum(patches == 0.0)
-
-    pred_mask = predicted >= self.eval_threshold
-    true_mask = labels > 0.5
-    pred_bg = np.logical_not(pred_mask)
-    true_bg = np.logical_not(true_mask)
-
-    self.tp += np.sum(pred_mask & true_mask)
-    self.fp += np.sum(pred_mask & true_bg)
-    self.fn += np.sum(pred_bg & true_mask)
-    self.tn += np.sum(pred_bg & true_bg)
-    self.num_patches += 1
-
-    predicted = expit(predicted)
-    self.images_xy.append(self.slice_image_v2(labels, predicted, patches, 0))
-    self.images_xz.append(self.slice_image_v2(labels, predicted, patches, 1))
-    self.images_yz.append(self.slice_image_v2(labels, predicted, patches, 2))
   def get_summaries(self):
     """Gathers tensorflow summaries into single list."""
 
@@ -619,9 +548,7 @@ def get_example(load_example, eval_tracker, model, get_offsets):
       assert predicted.base is seed
       yield predicted, patches, labels, weights
 
-    # eval_tracker.add_patch(
-    #     full_labels, seed, loss_weights, coord, volname, full_patches)
-    eval_tracker.add_patch_v2(
+    eval_tracker.add_patch(
         full_labels, seed, loss_weights, coord, volname, full_patches)
 
 

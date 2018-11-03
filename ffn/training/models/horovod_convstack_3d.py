@@ -56,7 +56,7 @@ class HorovodConvStack3DFFNModel(convstack_3d.ConvStack3DFFNModel):
       self.add_summaries()
     self.saver = tf.train.Saver(keep_checkpoint_every_n_hours=1)
 
-  def set_up_optimizer(self, loss=None, max_gradient_entry_mag=0.7):
+  def set_up_optimizer_old(self, loss=None, max_gradient_entry_mag=0.7):
     """Sets up the training op for the model."""
     if loss is None:
       loss = self.loss
@@ -93,3 +93,38 @@ class HorovodConvStack3DFFNModel(convstack_3d.ConvStack3DFFNModel):
     self.train_op = opt.apply_gradients(grads_and_vars,
                                         global_step=self.global_step,
                                         name='train')
+
+
+  def set_up_optimizer(self, loss=None, max_gradient_entry_mag=0.7):
+    """Sets up the training op for the model."""
+    if loss is None:
+      loss = self.loss
+    tf.summary.scalar('optimizer_loss', self.loss)
+
+    opt = optimizer.hvd_optimizer_from_flags(hvd.size())
+    opt = hvd.DistributedOptimizer(opt)
+    grads_and_vars = opt.compute_gradients(loss)
+
+    for g, v in grads_and_vars:
+      if g is None:
+        tf.logging.error('Gradient is None: %s', v.op.name)
+
+    if max_gradient_entry_mag > 0.0:
+      grads_and_vars = [(tf.clip_by_value(g,
+                                          -max_gradient_entry_mag,
+                                          +max_gradient_entry_mag), v)
+                        for g, v, in grads_and_vars]
+
+    trainables = tf.trainable_variables()
+    if trainables:
+      for var in trainables:
+        tf.summary.histogram(var.name.replace(':0', ''), var)
+    for grad, var in grads_and_vars:
+      tf.summary.histogram(
+          'gradients/%s' % var.name.replace(':0', ''), grad)
+
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+      self.train_op = opt.apply_gradients(grads_and_vars,
+                                          global_step=self.global_step,
+                                          name='train')

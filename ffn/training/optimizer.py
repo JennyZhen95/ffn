@@ -59,3 +59,24 @@ def optimizer_from_flags():
                                      epsilon=FLAGS.epsilon)
   else:
     raise ValueError('Unknown optimizer: %s' % FLAGS.optimizer)
+
+
+def hvd_optimizer_from_flags(hvd_size):
+  lr = FLAGS.learning_rate * hvd_size
+  if FLAGS.optimizer == 'momentum':
+    return tf.train.MomentumOptimizer(lr, FLAGS.momentum)
+  elif FLAGS.optimizer == 'sgd':
+    return tf.train.GradientDescentOptimizer(lr)
+  elif FLAGS.optimizer == 'adagrad':
+    return tf.train.AdagradOptimizer(lr)
+  elif FLAGS.optimizer == 'adam':
+    return tf.train.AdamOptimizer(learning_rate=lr,
+                                  beta1=FLAGS.adam_beta1,
+                                  beta2=FLAGS.adam_beta2,
+                                  epsilon=FLAGS.epsilon)
+  elif FLAGS.optimizer == 'rmsprop':
+    return tf.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
+                                     momentum=FLAGS.momentum,
+                                     epsilon=FLAGS.epsilon)
+  else:
+    raise ValueError('Unknown optimizer: %s' % FLAGS.optimizer)
