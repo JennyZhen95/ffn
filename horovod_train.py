@@ -481,9 +481,14 @@ def h5_distributed_dataset(model, queue_batch=None, rank=0):
 
   # Fetch a single coordinate and volume name from a queue reading the
   # coordinate files or from saved hard/important examples
-  ds = tf.data.TFRecordDataset([FLAGS.train_coords], compression_type='GZIP')
-  ds = ds.map(parser)
+  fnames = tf.matching_files(FLAGS.train_coords+'*')
+  logging.info('fnames %s', fnames)
+  ds = tf.data.TFRecordDataset(fnames, compression_type='GZIP')
+  #ds = tf.data.TFRecordDataset([FLAGS.train_coords], compression_type='GZIP')
+  ds = ds.map(parser, num_parallel_calls=40)
+  ds.prefetch(100)
   ds = ds.shard(hvd.size(), hvd.rank())
+
   value = ds.make_one_shot_iterator().get_next()
   coord, volname = value
 
