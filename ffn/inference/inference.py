@@ -49,6 +49,7 @@ from . import segmentation
 from ..training.import_util import import_symbol
 from ..utils import ortho_plane_visualization
 from ..utils import bounding_box
+from tqdm import tqdm
 
 MSEC_IN_SEC = 1000
 MAX_SELF_CONSISTENT_ITERS = 32
@@ -379,7 +380,7 @@ class Canvas(object):
       # Top-left corner of the FoV.
       start = np.array(pos) - self.margin
       end = start + self._input_image_size
-      img = self.image[[slice(s, e) for s, e in zip(start, end)]]
+      img = self.image[tuple([slice(s, e) for s, e in zip(start, end)])]
 
       # Record the amount of time spent on non-prediction tasks.
       if self.t_last_predict is not None:
@@ -418,7 +419,7 @@ class Canvas(object):
       start = np.array(pos) - off
       end = start + self._input_seed_size
       logit_seed = np.array(
-          self.seed[[slice(s, e) for s, e in zip(start, end)]])
+          self.seed[tuple([slice(s, e) for s, e in zip(start, end)])])
       init_prediction = np.isnan(logit_seed)
       logit_seed[init_prediction] = np.float32(self.options.pad_value)
 
@@ -451,7 +452,7 @@ class Canvas(object):
       # disconnectedness predictions in the course of inference.
       if self.options.disco_seed_threshold >= 0:
         th_max = logit(0.5)
-        old_seed = self.seed[sel]
+        old_seed = self.seed[tuple(sel)]
 
         if self._keep_history:
           self.history_deleted.append(
@@ -469,7 +470,7 @@ class Canvas(object):
           logits[mask] = old_seed[mask]
 
       # Update working space.
-      self.seed[sel] = logits
+      self.seed[tuple(sel)] = logits
 
     return logits
 
@@ -515,7 +516,7 @@ class Canvas(object):
       self.movement_policy.append(item)
 
     with timer_counter(self.counters, 'segment_at-loop'):
-      for pos in self.movement_policy:
+      for pos in tqdm(self.movement_policy):
         # Terminate early if the seed got too weak.
         if self.seed[start_pos] < self.options.move_threshold:
           self.counters['seed_got_too_weak'].Increment()
@@ -885,6 +886,7 @@ class Runner(object):
 
     if session is None:
       config = tf.ConfigProto()
+      config.gpu_options.allow_growth = True
       tf.reset_default_graph()
       session = tf.Session(config=config)
     self.session = session

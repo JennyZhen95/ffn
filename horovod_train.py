@@ -457,6 +457,80 @@ def parser(proto):
   volname = examples['label_volume_name']
   return coord, volname
   # return coord
+def h5_distributed_dataset_v2(model, queue_batch=None):
+  def read_data(coord, volname):
+    #coord, volname = value
+    labels = inputs.load_from_numpylike(
+        coord, volname, label_size, label_volume_map)
+
+    label_shape = [1] + label_size[::-1] + [1]
+    labels = tf.reshape(labels, label_shape)
+
+    loss_weights = tf.constant(np.ones(label_shape, dtype=np.float32))
+
+    # Load image data.
+    patch = inputs.load_from_numpylike(
+        coord, volname, image_size, image_volume_map)
+    data_shape = [1] + image_size[::-1] + [1]
+    patch = tf.reshape(patch, shape=data_shape)
+
+    if ((FLAGS.image_stddev is None or FLAGS.image_mean is None) and
+        not FLAGS.image_offset_scale_map):
+      raise ValueError('--image_mean, --image_stddev or --image_offset_scale_map '
+                      'need to be defined')
+
+    # Convert segmentation into a soft object mask.
+    lom = tf.logical_and(
+        labels > 0,
+        tf.equal(labels, labels[0,
+                                label_radii[2],
+                                label_radii[1],
+                                label_radii[0],
+                                0]))
+    labels = inputs.soften_labels(lom)
+
+    # Apply basic augmentations.
+    transform_axes = augmentation.PermuteAndReflect(
+        rank=5, permutable_axes=_get_permutable_axes(),
+        reflectable_axes=_get_reflectable_axes())
+    labels = transform_axes(labels)
+    patch = transform_axes(patch)
+    loss_weights = transform_axes(loss_weights)
+    # return (patch[0], labels[0], loss_weights[0], coord[0], volname[0])
+    return (patch, labels, loss_weights, coord, volname)
+
+  if queue_batch is None:
+    queue_batch = FLAGS.batch_size
+  image_volume_map = {}
+  for vol in FLAGS.data_volumes.split(','):
+    volname, path, dataset = vol.split(':')
+    image_volume_map[volname] = h5py.File(path, 'r')[dataset]
+
+  label_volume_map = {}
+  for vol in FLAGS.label_volumes.split(','):
+    volname, path, dataset = vol.split(':')
+    label_volume_map[volname] = h5py.File(path, 'r')[dataset]
+
+  # Fetch sizes of images and labels
+  label_size = train_labels_size(model)
+  image_size = train_image_size(model)
+
+  label_radii = (label_size // 2).tolist()
+  label_size = label_size.tolist()
+  image_radii = (image_size // 2).tolist()
+  image_size = image_size.tolist()
+
+  # Fetch a single coordinate and volume name from a queue reading the
+  # coordinate files or from saved hard/important examples
+  fnames = tf.matching_files(FLAGS.train_coords+'*')
+  ds = tf.data.TFRecordDataset(fnames, compression_type='GZIP')
+  ds = ds.map(parser, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+  ds = ds.map(read_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+  ds = ds.prefetch(100)
+  # ds = ds.batch(queue_batch)
+  ds = ds.shard(hvd.size(), hvd.rank())
+  return ds.make_one_shot_iterator().get_next()
+
 def h5_distributed_dataset(model, queue_batch=None, rank=0):
   if queue_batch is None:
     queue_batch = FLAGS.batch_size
@@ -486,7 +560,7 @@ def h5_distributed_dataset(model, queue_batch=None, rank=0):
   ds = tf.data.TFRecordDataset(fnames, compression_type='GZIP')
   #ds = tf.data.TFRecordDataset([FLAGS.train_coords], compression_type='GZIP')
   ds = ds.map(parser, num_parallel_calls=40)
-  ds.prefetch(100)
+  ds.prefetch(1000)
   ds = ds.shard(hvd.size(), hvd.rank())
 
   value = ds.make_one_shot_iterator().get_next()
@@ -761,7 +835,7 @@ def train_ffn(model_cls, **model_kwargs):
 
     checkpoint_dir = FLAGS.train_dir if hvd.rank() == 0 else None
     summary_writer = None
-    saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.25)
+    saver = tf.train.Saver(max_to_keep=None, keep_checkpoint_every_n_hours=24)
     scaffold = tf.train.Scaffold(saver=saver)
 
     with tf.train.MonitoredTrainingSession(
@@ -800,6 +874,7 @@ def train_ffn(model_cls, **model_kwargs):
       }
       batch_it = get_batch(lambda: sess.run(load_data_ops),
                             eval_tracker, model, FLAGS.batch_size,
+                            # eval_tracker, model, 1,
                             policy_map[FLAGS.fov_policy])
 
       t_last = time.time()

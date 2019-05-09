@@ -411,7 +411,7 @@ def load_segmentation(segmentation_dir, corner, allow_cpoint=False,
                      (segmentation_dir, corner))
 
   with open(target_path, 'rb') as f:
-    data = np.load(f, mmap_mode='r', allow_pickle=True)
+    data = np.load(f)
     if 'segmentation' in data:
       seg = data['segmentation']
     else:

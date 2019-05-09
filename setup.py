@@ -13,6 +13,7 @@ setup(
             'build_coordinates_parallel.py', 
             'compute_partitions_parallel.py', 
             'run_inference.py', 
+            'run_inference_at.py', 
             'train.py',
             'horovod_train.py'],
 	url		= 'https://github.com/google/ffn',

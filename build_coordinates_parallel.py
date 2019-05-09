@@ -21,6 +21,7 @@ import numpy as np
 import tensorflow as tf
 
 import sys
+import os
 from tqdm import tqdm
 
 from mpi4py import MPI
@@ -46,6 +47,9 @@ flags.DEFINE_list('margin', None, '(z, y, x) tuple specifying the '
                   '+ deltas.')
 flags.DEFINE_integer('max_samples', 100000, 'Max number of samples for each '
                   'partition')
+flags.DEFINE_boolean('ignore_zero', False, 'If true, 0 partition will not show '
+                  'in training coords, used when label is sparse')
+            
 
 
 IGNORE_PARTITION = 255
@@ -65,6 +69,7 @@ def main(argv):
   if mpi_rank == 0:
     totals = defaultdict(int)  # partition -> voxel count
     indices = defaultdict(list)  # partition -> [(vol_id, 1d index)]
+    os.makedirs(FLAGS.coordinate_output, exist_ok=True)
 
     vol_labels = []
     vol_shapes = []
@@ -81,7 +86,9 @@ def main(argv):
         for val, cnt in zip(uniques, counts):
           if val == IGNORE_PARTITION:
             continue
-
+          if FLAGS.ignore_zero:
+            if val == 0:
+              continue
           totals[val] += cnt
           indices[val].extend(
               [(i, flat_index) for flat_index in

@@ -164,6 +164,7 @@ class FFNModel(object):
     with tf.control_dependencies(update_ops):
       self.train_op = opt.apply_gradients(grads_and_vars,
                                           global_step=self.global_step,
+                                          #global_step=tf.train.get_global_step(),
                                           name='train')
 
   def show_center_slice(self, image, sigmoid=True):
