@@ -517,6 +517,7 @@ class Canvas(object):
 
     with timer_counter(self.counters, 'segment_at-loop'):
       for pos in tqdm(self.movement_policy):
+      # for pos in self.movement_policy:
         # Terminate early if the seed got too weak.
         if self.seed[start_pos] < self.options.move_threshold:
           self.counters['seed_got_too_weak'].Increment()
@@ -797,9 +798,11 @@ class Runner(object):
 
   ALL_MASKED = 1
 
-  def __init__(self):
+  def __init__(self, use_cpu=False, use_gpu=None):
     self.counters = inference_utils.Counters()
     self.executor = None
+    self.use_cpu = use_cpu
+    self.use_gpu = use_gpu
 
   def __del__(self):
     self.stop_executor()
@@ -885,8 +888,15 @@ class Runner(object):
     self.stop_executor()
 
     if session is None:
-      config = tf.ConfigProto()
-      config.gpu_options.allow_growth = True
+      if self.use_cpu:
+        config = tf.ConfigProto(
+          device_count={'GPU': 0})
+      elif self.use_gpu:
+        gpu_options = tf.GPUOptions(visible_device_list=self.use_gpu, allow_growth=True)
+        config=tf.ConfigProto(gpu_options=gpu_options)
+      else:
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
       tf.reset_default_graph()
       session = tf.Session(config=config)
     self.session = session
