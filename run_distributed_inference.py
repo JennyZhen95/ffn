@@ -21,6 +21,7 @@ Inference is performed within a single process.
 
 import os
 import time
+import timeit
 
 from google.protobuf import text_format
 from absl import app
@@ -52,12 +53,11 @@ flags.DEFINE_boolean('use_cpu', True, 'Use CPU instead of GPU')
 flags.DEFINE_boolean('distribute_gpu', True, 'Allocate on different GPUs')
 
 def divide_bounding_box(bbox, subvolume_size, overlap):
-  """divide up into valid subvolume with padding on each dim."""
+  """divide up into valid subvolumes."""
   # deal with parsed bbox missing "end" attr
   start = geom_utils.ToNumpy3Vector(bbox.start)
   size = geom_utils.ToNumpy3Vector(bbox.size)
 
-  # bbox = bounding_box.BoundingBox(start-overlap//2, size+overlap)
   bbox = bounding_box.BoundingBox(start, size)
   print(bbox)
 
@@ -69,45 +69,9 @@ def divide_bounding_box(bbox, subvolume_size, overlap):
     back_shift_small_sub_boxes=False)
   
   return [bb for bb in calc.generate_sub_boxes()]
-  # for bb in calc.generate_sub_boxes():
-  #   yield bb
 
 def main(unused_argv):
-
-  # serial version
-  # request = inference_flags.request_from_flags()
-
-  # if not gfile.Exists(request.segmentation_output_dir):
-  #   gfile.MakeDirs(request.segmentation_output_dir)
-
-  # bbox = bounding_box_pb2.BoundingBox()
-  # text_format.Parse(FLAGS.bounding_box, bbox)
-  # print(request)
-
-  # subvolume_size = np.array([int(i) for i in FLAGS.subvolume_size])
-  # overlap = np.array([int(i) for i in FLAGS.overlap])
-  # sub_bboxes = divide_bounding_box(bbox, subvolume_size, overlap)
-
-  # sub_bbox = sub_bboxes[0]
-  
-  # out_name = 'seg-%d_%d_%d_%d_%d_%d' % (
-  #   sub_bbox.start[0], sub_bbox.start[1], sub_bbox.start[2], 
-  #   sub_bbox.size[0], sub_bbox.size[1], sub_bbox.size[2])
-  # segmentation_output_dir = os.path.join(request.segmentation_output_dir, out_name)
-
-  # print(segmentation_output_dir)
-  # request.segmentation_output_dir = segmentation_output_dir
-  
-  # runner = inference.Runner(use_cpu=False)
-  # runner.start(request)
-  # print(sub_bbox.start, sub_bbox.size)
-  # runner.run(sub_bbox.start[::-1], 
-  #            sub_bbox.size[::-1])
-
-  # counter_path = os.path.join(request.segmentation_output_dir, 'counters.txt')
-  # if not gfile.Exists(counter_path):
-  #   runner.counters.dump(counter_path)
-
+  start_time = time.time()
   # mpi version
 
   request = inference_flags.request_from_flags()
@@ -122,28 +86,26 @@ def main(unused_argv):
     subvolume_size = np.array([int(i) for i in FLAGS.subvolume_size])
     overlap = np.array([int(i) for i in FLAGS.overlap])
     sub_bboxes = divide_bounding_box(bbox, subvolume_size, overlap)
-    # gpu_list = device_lib.list_local_devices()
-    # print(gpu_list)
+    sub_bboxes = np.array_split(np.array(sub_bboxes), mpi_size)
+    print(sub_bboxes)
   else:
     sub_bboxes = None
   
-  sub_bboxes = mpi_comm.bcast(sub_bboxes, 0)
-  sub_bbox = sub_bboxes[mpi_rank]
-  print('rank %d, bbox: %s' % (mpi_rank, sub_bbox))
+  sub_bboxes = mpi_comm.scatter(sub_bboxes, 0)
+  print('rank %d, bbox: %s' % (mpi_rank, len(sub_bboxes)))
   
-  out_name = 'seg-%d_%d_%d_%d_%d_%d' % (
-    sub_bbox.start[0], sub_bbox.start[1], sub_bbox.start[2], 
-    sub_bbox.size[0], sub_bbox.size[1], sub_bbox.size[2])
-  segmentation_output_dir = os.path.join(request.segmentation_output_dir, out_name)
-  request.segmentation_output_dir = segmentation_output_dir
-  use_gpu = str(mpi_rank % 2)
-  print('use_gpu:', use_gpu)
-  runner = inference.Runner(use_cpu=FLAGS.use_cpu, use_gpu=use_gpu)
-  runner.start(request)
-  runner.run(sub_bbox.start[::-1], sub_bbox.size[::-1])
+  for sub_bbox in sub_bboxes:
+    out_name = 'seg-%d_%d_%d_%d_%d_%d' % (
+      sub_bbox.start[0], sub_bbox.start[1], sub_bbox.start[2], 
+      sub_bbox.size[0], sub_bbox.size[1], sub_bbox.size[2])
+    segmentation_output_dir = os.path.join(request.segmentation_output_dir, out_name)
+    request.segmentation_output_dir = segmentation_output_dir
+    use_gpu = str(mpi_rank % 2)
+    runner = inference.Runner(use_cpu=FLAGS.use_cpu, use_gpu=use_gpu)
+    runner.start(request)
+    runner.run(sub_bbox.start[::-1], sub_bbox.size[::-1])
 
-  # counter_path = os.path.join(request.segmentation_output_dir, 'counters.txt')
-  # if not gfile.Exists(counter_path):
-  #   runner.counters.dump(counter_path)
+  end_time = time.time()
+  print('>> ', end_time - start_time)
 if __name__ == '__main__':
   app.run(main)
