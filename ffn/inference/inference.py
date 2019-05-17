@@ -49,7 +49,6 @@ from . import segmentation
 from ..training.import_util import import_symbol
 from ..utils import ortho_plane_visualization
 from ..utils import bounding_box
-from tqdm import tqdm
 
 MSEC_IN_SEC = 1000
 MAX_SELF_CONSISTENT_ITERS = 32
@@ -516,8 +515,7 @@ class Canvas(object):
       self.movement_policy.append(item)
 
     with timer_counter(self.counters, 'segment_at-loop'):
-      for pos in tqdm(self.movement_policy):
-      # for pos in self.movement_policy:
+      for pos in self.movement_policy:
         # Terminate early if the seed got too weak.
         if self.seed[start_pos] < self.options.move_threshold:
           self.counters['seed_got_too_weak'].Increment()
