@@ -34,7 +34,45 @@ from . import align
 from . import segmentation
 from ..utils import bounding_box
 
+import cloudvolume
+from cloudvolume.lib import Bbox
+
+
 OriginInfo = namedtuple('OriginInfo', ['start_zyx', 'iters', 'walltime_sec'])
+
+class TransposedCloudVolume(object):
+  """Wraps around a cloudvolume to allow arbiturary transposed slicing.
+  
+  The canonical axes in ffn is czyx while in cloudvolume is xyzc
+  This allows read only access of a cloudvolume in xyzc order with minimal 
+  code change in ffn
+  """
+  def __init__(self, vol, transpose):
+    self.vol = vol
+    if transpose is None:
+      self.transpose = np.array([0, 1, 2, 3])
+    self.transpose = np.array(transpose)
+    
+  def __getitem__(self, slices):
+    actual_bbox = self.vol.meta.bbox(self.vol.mip)
+    bbox_T = Bbox(actual_bbox.minpt[self.transpose], actual_bbox.maxpt[self.transpose])
+    reified_slices = bbox_T.reify_slices(slices, bounded=self.vol.bounded)
+    actual_reified_slices = [reified_slices[i] for i in self.transpose]
+    actual_data = self.vol.__getitem__(actual_reified_slices)
+    data_T = actual_data[...].transpose(self.transpose)
+    return data_T
+
+  @property
+  def value(self):
+    return self.vol
+
+  @property
+  def shape(self):
+    return self.vol.shape[self.transpose]
+
+  @property
+  def ndim(self):
+    return 4
 
 
 def decorated_volume(settings, **kwargs):
@@ -59,7 +97,18 @@ def decorated_volume(settings, **kwargs):
     if len(path) != 2:
       raise ValueError('hdf5 volume_path should be specified as file_path:'
                        'hdf5_internal_dataset_path.  Got: ' + settings.hdf5)
-    volume = h5py.File(path[0])[path[1]]
+    volume = h5py.File(path[0], 'r')[path[1]]
+  elif settings.HasField('precomputed'):
+    if settings.HasField('axes'):
+      if settings.axes == 'zyx' or settings.axes == 'czyx':
+        transpose = None
+      elif settings.axes == 'xyz' or settings.axes == 'xyzc':
+        transpose = (3, 2, 1, 0)
+      else:
+        raise ValueError('Unknow axes type')
+    c_vol = cloudvolume.CloudVolume('file://%s' % settings.precomputed, mip=0, parallel=True, progress=True)
+    volume = TransposedCloudVolume(c_vol, transpose=transpose)
+
   else:
     raise ValueError('A volume_path must be set.')
 

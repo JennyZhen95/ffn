@@ -15,11 +15,12 @@ setup(
             'run_inference.py', 
             'run_inference_at.py', 
             'run_distributed_inference.py', 
+            'run_distributed_inference_resume.py', 
             'train.py',
             'horovod_train.py'],
 	url		= 'https://github.com/google/ffn',
 	license		= 'LICENSE',
 	description	= 'Flood-Filling Networks for volumetric instance segmentation',
 	long_description= open('README.md').read(),
-	install_requires= ['scikit-image', 'scipy', 'numpy', 'tensorflow-gpu', 'h5py', 'Pillow', 'absl-py'],
+	install_requires= ['scikit-image', 'scipy', 'numpy', 'h5py', 'Pillow', 'absl-py'],
 )

@@ -16,16 +16,20 @@
 
 import re
 
-import google3
+# import google3
 import numpy as np
 from scipy import ndimage
 
-from google3.pyglib import gfile
-from google3.pyglib import logging
+# from google3.pyglib import gfile
+# from google3.pyglib import logging
 
-from google3.research.neuromancer.segmentation.ffn import resegmentation_pb2
-from google3.research.neuromancer.segmentation.ffn import storage
-from google3.research.neuromancer.segmentation.python import pywrapsegment_util
+# from google3.research.neuromancer.segmentation.ffn import resegmentation_pb2
+# from google3.research.neuromancer.segmentation.ffn import storage
+# from google3.research.neuromancer.segmentation.python import pywrapsegment_util
+from tensorflow import gfile
+from absl import logging
+from . import resegmentation_pb2
+from . import storage
 
 
 class InvalidBaseSegmentatonError(Exception):
@@ -193,8 +197,9 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   sr = result.segmentation_radius
   sr.z, sr.y, sr.x = resegmentation_radius
 
-  with gfile.Open(filename, 'r') as f:
-    data = np.load(f)
+  # with gfile.Open(filename, 'r') as f:
+  with open(filename, 'rb') as f:
+    data = np.load(f, allow_pickle=True)
     prob = storage.dequantize_probability(data['probs'])
     prob = np.nan_to_num(prob)  # nans indicate unvisited voxels
     dels = data['deletes']
@@ -223,10 +228,19 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   r = result.eval.radius
   r.z, r.y, r.x = analysis_r
 
+  # if axes == 'zyx':
   seg = seg_volume[0,
-                   (z - analysis_r[0]):(z + analysis_r[0] + 1),
-                   (y - analysis_r[1]):(y + analysis_r[1] + 1),
-                   (x - analysis_r[2]):(x + analysis_r[2] + 1)][0, ...]
+                  (z - analysis_r[0]):(z + analysis_r[0] + 1),
+                  (y - analysis_r[1]):(y + analysis_r[1] + 1),
+                  (x - analysis_r[2]):(x + analysis_r[2] + 1)][0, ...]
+  # elif axes == 'xyz':
+  #   seg = seg_volume[(x - analysis_r[2]):(x + analysis_r[2] + 1),
+  #                    (y - analysis_r[1]):(y + analysis_r[1] + 1),
+  #                    (z - analysis_r[0]):(z + analysis_r[0] + 1),
+  #                    0][..., 0]
+  #   seg = seg.transpose([2,1,0])
+  #   logging.warning(seg.shape)
+
   seg1 = seg == id1
   seg2 = seg == id2
   result.eval.num_voxels_a = int(np.sum(seg1))
@@ -253,9 +267,9 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   # Record information about the size of the reconstructed segments.
   evaluate_segmentation_result(
       reseg[0, ...], dels[0], moves[0], delta, analysis_r, seg1, seg2,
-      sampling, result.eval.from_a)
+      sampling=voxel_size, result=result.eval.from_a)
   evaluate_segmentation_result(
       reseg[1, ...], dels[1], moves[1], delta, analysis_r, seg1, seg2,
-      sampling, result.eval.from_b)
+      sampling=voxel_size, result=result.eval.from_b)
 
   return result

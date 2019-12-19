@@ -69,7 +69,7 @@ def main(argv):
   if mpi_rank == 0:
     totals = defaultdict(int)  # partition -> voxel count
     indices = defaultdict(list)  # partition -> [(vol_id, 1d index)]
-    os.makedirs(FLAGS.coordinate_output, exist_ok=True)
+    os.makedirs(os.path.dirname(FLAGS.coordinate_output), exist_ok=True)
 
     vol_labels = []
     vol_shapes = []

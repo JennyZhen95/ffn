@@ -27,8 +27,11 @@ from absl import app
 from absl import flags
 from tensorflow import gfile
 import os
+from os.path import join, basename, dirname
+import re
 import numpy as np
 import sys
+import glob
 
 from ffn.utils import bounding_box_pb2
 from ffn.inference import inference
@@ -43,11 +46,13 @@ mpi_size = mpi_comm.Get_size()
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('bounding_box', None,
-                    'BoundingBox proto in text format defining the area '
-                    'to segmented.')
+# flags.DEFINE_string('bounding_box', None,
+#                     'BoundingBox proto in text format defining the area '
+#                     'to segmented.')
+# flags.DEFINE_string('input_dir', None, 'directory containing cpoints')
 flags.DEFINE_list('subvolume_size', '512,512,128', '"valid"subvolume_size to issue to each runner')
 flags.DEFINE_list('overlap', '32,32,16', 'overlap of bbox')
+flags.DEFINE_boolean('empty', False, '')
 flags.DEFINE_boolean('use_cpu', False, 'Use CPU instead of GPU')
 flags.DEFINE_integer('num_gpu', 0, 'Allocate on different GPUs')
 
@@ -69,6 +74,27 @@ def divide_bounding_box(bbox, subvolume_size, overlap):
   
   return [bb for bb in calc.generate_sub_boxes()]
 
+def infer_bbox_from_directory(input_dir):
+  cpoints = glob.glob(join(input_dir, '**/*.cpoint'), recursive=True)
+  bboxes = []
+  for cp in cpoints:
+    src_dir = re.search(r'(.*)/.*/.*/(.*.cpoint)', cp).groups()[0]
+    res = re.search(r'seg-(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)', src_dir).groups()
+    ox, oy, oz, sx, sy, sz = [int(i) for i in res]
+    bbox = bounding_box.BoundingBox(start=(ox,oy,oz), size=(sx, sy, sz))
+    bboxes.append(bbox)
+  return bboxes
+def infer_bbox_from_empty_directory(input_dir):
+  cpoints = glob.glob(join(input_dir, '**/seg-*/*/*/'), recursive=True)
+  bboxes = []
+  for cp in cpoints:
+    src_dir = re.search(r'(.*)/.*/.*/', cp).groups()[0]
+    res = re.search(r'seg-(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)', src_dir).groups()
+    ox, oy, oz, sx, sy, sz = [int(i) for i in res]
+    bbox = bounding_box.BoundingBox(start=(ox,oy,oz), size=(sx, sy, sz))
+    bboxes.append(bbox)
+  return bboxes
+    
 def main(unused_argv):
   start_time = time.time()
   # mpi version
@@ -77,14 +103,20 @@ def main(unused_argv):
     if not gfile.Exists(request.segmentation_output_dir):
       gfile.MakeDirs(request.segmentation_output_dir)
 
-    bbox = bounding_box_pb2.BoundingBox()
-    text_format.Parse(FLAGS.bounding_box, bbox)
+    # bbox = bounding_box_pb2.BoundingBox()
+    # text_format.Parse(FLAGS.bounding_box, bbox)
 
     subvolume_size = np.array([int(i) for i in FLAGS.subvolume_size])
     overlap = np.array([int(i) for i in FLAGS.overlap])
-    sub_bboxes = divide_bounding_box(bbox, subvolume_size, overlap)
-    sub_bboxes = np.array_split(np.array(sub_bboxes), mpi_size)
+    # sub_bboxes = divide_bounding_box(bbox, subvolume_size, overlap)
     root_output_dir = request.segmentation_output_dir
+    if FLAGS.empty:
+      sub_bboxes = infer_bbox_from_empty_directory(root_output_dir)
+    else:
+      sub_bboxes = infer_bbox_from_directory(root_output_dir)
+
+
+    sub_bboxes = np.array_split(np.array(sub_bboxes), mpi_size)
   else:
     sub_bboxes = None
     root_output_dir = None
@@ -93,6 +125,7 @@ def main(unused_argv):
   root_output_dir = mpi_comm.bcast(root_output_dir, 0)
   print('rank %d, bbox: %s' % (mpi_rank, len(sub_bboxes)))
   print(sub_bboxes)
+  # sys.exit()
   
   for sub_bbox in sub_bboxes:
     out_name = 'seg-%d_%d_%d_%d_%d_%d' % (

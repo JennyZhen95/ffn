@@ -36,7 +36,7 @@ def crop(tensor, offset, crop_shape):
     cropped tensor
   """
   with tf.name_scope('offset_crop'):
-    shape = tensor.shape_as_list()
+    shape = tensor.shape.as_list()
 
     # Nothing to do?
     if shape[1:-1] == crop_shape[::-1]:

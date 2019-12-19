@@ -678,6 +678,58 @@ class Canvas(object):
     # inference.
     self._deregister_client()
 
+  # def init_segmentation_from_volume(self, volume, corner, end,
+  #                                   align_and_crop=None, axes='zyx', 
+  #                                   contiguous=True):
+  #   """Initializes segmentation from an existing VolumeStore.
+
+  #   This is useful to start inference with an existing segmentation.
+  #   The segmentation does not need to be generated with an FFN.
+
+  #   Args:
+  #     volume: volume object, as returned by storage.decorated_volume.
+  #     corner: location at which to read data as (z, y, x)
+  #     end: location at which to stop reading data as (z, y, x)
+  #     align_and_crop: callable to align & crop a 3d segmentation subvolume
+  #   """
+    
+  #   self.log_info('Loading initial segmentation from (zyx) %r:%r',
+  #                 corner, end)
+
+  #   if axes == 'zyx':
+  #     init_seg = volume[:,  #
+  #                       corner[0]:end[0],  #
+  #                       corner[1]:end[1],  #
+  #                       corner[2]:end[2]]
+
+  #     if contiguous:
+  #       init_seg, global_to_local = segmentation.make_labels_contiguous(init_seg)
+  #     init_seg = init_seg[0, ...]
+  #   elif axes == 'xyz':
+  #     # For precomputed volume, default axes are [x, y, z, c]
+  #     init_seg = volume[corner[2]:end[2],  #
+  #                       corner[1]:end[1],  #
+  #                       corner[0]:end[0],
+  #                       :]
+  #     if contiguous:
+  #       init_seg, global_to_local = segmentation.make_labels_contiguous(init_seg)
+  #     init_seg = init_seg[..., 0].transpose([2,1,0]) # unify to z, y, x order
+
+
+  #   self.global_to_local_ids = dict(global_to_local)
+
+  #   self.log_info('Segmentation loaded, shape: %r. Canvas segmentation is %r',
+  #                 init_seg.shape, self.segmentation.shape)
+  #   if align_and_crop is not None:
+  #     init_seg = align_and_crop(init_seg)
+  #     self.log_info('Segmentation cropped to: %r', init_seg.shape)
+
+  #   self.segmentation[:] = init_seg
+  #   self.seg_prob[self.segmentation > 0] = storage.quantize_probability(
+  #       np.array([1.0]))
+  #   self._max_id = np.max(self.segmentation)
+  #   self.log_info('Max restored ID is: %d.', self._max_id)
+
   def init_segmentation_from_volume(self, volume, corner, end,
                                     align_and_crop=None):
     """Initializes segmentation from an existing VolumeStore.
@@ -715,6 +767,7 @@ class Canvas(object):
         np.array([1.0]))
     self._max_id = np.max(self.segmentation)
     self.log_info('Max restored ID is: %d.', self._max_id)
+
 
   def restore_checkpoint(self, path):
     """Restores state from the checkpoint at `path`."""
@@ -889,7 +942,7 @@ class Runner(object):
       if self.use_cpu:
         config = tf.ConfigProto(
           device_count={'GPU': 0})
-      elif self.use_gpu:
+      elif self.use_gpu is not None:
         gpu_options = tf.GPUOptions(visible_device_list=self.use_gpu, allow_growth=True)
         config=tf.ConfigProto(gpu_options=gpu_options)
       else:
@@ -997,6 +1050,123 @@ class Runner(object):
     else:
       return None
 
+  # def make_canvas(self, corner, subvol_size, axes='zyx', contiguous=True, **canvas_kwargs):
+  #   """Builds the Canvas object for inference on a subvolume.
+
+  #   Args:
+  #     corner: start of the subvolume (z, y, x)
+  #     subvol_size: size of the subvolume (z, y, x)
+  #     **canvas_kwargs: passed to Canvas
+
+  #   Returns:
+  #     A tuple of:
+  #       Canvas object
+  #       Alignment object
+  #   """
+  #   subvol_counters = self.counters.get_sub_counters()
+  #   with timer_counter(subvol_counters, 'load-image'):
+  #     logging.info('Process subvolume: %r', corner)
+
+  #     # A Subvolume with bounds defined by (src_size, src_corner) is guaranteed
+  #     # to result in no missing data when aligned to (dst_size, dst_corner).
+  #     # Likewise, one defined by (dst_size, dst_corner) is guaranteed to result
+  #     # in no missing data when reverse-aligned to (corner, subvol_size).
+  #     alignment = self._aligner.generate_alignment(corner, subvol_size)
+
+  #     # Bounding box for the aligned destination subvolume.
+  #     dst_corner, dst_size = alignment.expand_bounds(
+  #         corner, subvol_size, forward=True)
+  #     # Bounding box for the pre-aligned imageset to be fetched from the volume.
+  #     src_corner, src_size = alignment.expand_bounds(
+  #         dst_corner, dst_size, forward=False)
+  #     # Ensure that the request bounds don't extend beyond volume bounds.
+  #     src_corner, src_size = storage.clip_subvolume_to_bounds(
+  #         src_corner, src_size, self._image_volume)
+
+  #     logging.info('Requested bounds are %r + %r', corner, subvol_size)
+  #     logging.info('Destination bounds are %r + %r', dst_corner, dst_size)
+  #     logging.info('Fetch bounds are %r + %r', src_corner, src_size)
+
+  #     # Fetch the image from the volume using the src bounding box.
+  #     def get_data_3d(volume, bbox):
+  #       slc = bbox.to_slice()
+  #       if volume.ndim == 4:
+  #         slc = np.index_exp[0:1] + slc
+  #       data = volume[slc]
+  #       if data.ndim == 4:
+  #         data = data.squeeze(axis=0)
+  #       return data
+  #     src_bbox = bounding_box.BoundingBox(
+  #         start=src_corner[::-1], size=src_size[::-1])
+  #     src_image = get_data_3d(self._image_volume, src_bbox)
+  #     logging.info('Fetched image of size %r prior to transform',
+  #                  src_image.shape)
+
+  #     def align_and_crop(image):
+  #       return alignment.align_and_crop(src_corner, image, dst_corner, dst_size,
+  #                                       forward=True)
+
+  #     # Align and crop to the dst bounding box.
+  #     image = align_and_crop(src_image)
+  #     # image now has corner dst_corner and size dst_size.
+
+  #     logging.info('Image data loaded, shape: %r.', image.shape)
+
+  #   restrictor = self.make_restrictor(dst_corner, dst_size, image, alignment)
+
+  #   try:
+  #     if self._reference_lut is not None:
+  #       if self.request.histogram_masks:
+  #         histogram_mask = storage.build_mask(self.request.histogram_masks,
+  #                                             dst_corner, dst_size,
+  #                                             self._mask_volumes,
+  #                                             image, alignment)
+  #       else:
+  #         histogram_mask = None
+
+  #       inference_utils.match_histogram(image, self._reference_lut,
+  #                                       mask=histogram_mask)
+  #   except ValueError as e:
+  #     # This can happen if the subvolume is relatively small because of tiling
+  #     # done by CLAHE. For now we just ignore these subvolumes.
+  #     # TODO(mjanusz): Handle these cases by reducing the number of tiles.
+  #     logging.info('Could not match histogram: %r', e)
+  #     return None, None
+
+  #   image = (image.astype(np.float32) -
+  #            self.request.image_mean) / self.request.image_stddev
+  #   if restrictor == self.ALL_MASKED:
+  #     return None, None
+
+  #   if self.request.HasField('self_prediction'):
+  #     halt_signaler = self_prediction_halt(
+  #         self.request.self_prediction.threshold,
+  #         orig_threshold=self.request.self_prediction.orig_threshold,
+  #         verbosity=PRINT_HALTS)
+  #   else:
+  #     halt_signaler = no_halt()
+
+  #   canvas = Canvas(
+  #       self.model,
+  #       self.executor,
+  #       image,
+  #       self.request.inference_options,
+  #       counters=subvol_counters,
+  #       restrictor=restrictor,
+  #       movement_policy_fn=self.movement_policy_fn,
+  #       halt_signaler=halt_signaler,
+  #       checkpoint_path=storage.checkpoint_path(
+  #           self.request.segmentation_output_dir, corner),
+  #       checkpoint_interval_sec=self.request.checkpoint_interval,
+  #       corner_zyx=dst_corner,
+  #       **canvas_kwargs)
+
+  #   if self.request.HasField('init_segmentation'):
+  #     canvas.init_segmentation_from_volume(self.init_seg_volume, src_corner,
+  #                                          src_bbox.end[::-1], align_and_crop,
+  #                                          axes, contiguous
+  #                                          )
+  #   return canvas, alignment
   def make_canvas(self, corner, subvol_size, **canvas_kwargs):
     """Builds the Canvas object for inference on a subvolume.
 
@@ -1112,7 +1282,7 @@ class Runner(object):
       canvas.init_segmentation_from_volume(self.init_seg_volume, src_corner,
                                            src_bbox.end[::-1], align_and_crop)
     return canvas, alignment
-
+    
   def get_seed_policy(self, corner, subvol_size):
     """Get seed policy generating callable.
 
