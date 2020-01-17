@@ -77,8 +77,8 @@ def hvd_optimizer_from_flags():
                                   epsilon=FLAGS.epsilon)
   elif FLAGS.optimizer == 'rmsprop':
     opt = tf.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
-                                     momentum=FLAGS.momentum,
-                                     epsilon=FLAGS.epsilon)
+                                    momentum=FLAGS.momentum,
+                                    epsilon=FLAGS.epsilon)
   else:
     raise ValueError('Unknown optimizer: %s' % FLAGS.optimizer)
   return hvd.DistributedOptimizer(opt)

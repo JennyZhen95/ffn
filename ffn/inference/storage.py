@@ -68,7 +68,7 @@ class TransposedCloudVolume(object):
 
   @property
   def shape(self):
-    return self.vol.shape[self.transpose]
+    return np.array(self.vol.shape)[self.transpose]
 
   @property
   def ndim(self):
@@ -106,7 +106,7 @@ def decorated_volume(settings, **kwargs):
         transpose = (3, 2, 1, 0)
       else:
         raise ValueError('Unknow axes type')
-    c_vol = cloudvolume.CloudVolume('file://%s' % settings.precomputed, mip=0, parallel=True, progress=True)
+    c_vol = cloudvolume.CloudVolume('file://%s' % settings.precomputed, mip=0, parallel=False, progress=False)
     volume = TransposedCloudVolume(c_vol, transpose=transpose)
 
   else:
@@ -322,9 +322,12 @@ def clip_subvolume_to_bounds(corner, size, volume):
     corner: the corner argument, clipped to the volume bounds
     size: the size argument, clipped to the volume bounds
   """
+  logging.info('step 4')
   volume_size = volume.shape
+  logging.info('step 5: %s', volume_size)
   if volume.ndim == 4:
     volume_size = volume_size[1:]
+  # logging.info('volume_size: %s', volume_size)
   volume_bounds = bounding_box.BoundingBox(start=(0, 0, 0), size=volume_size)
   subvolume_bounds = bounding_box.BoundingBox(start=corner, size=size)
   clipped_bounds = bounding_box.intersection(volume_bounds, subvolume_bounds)

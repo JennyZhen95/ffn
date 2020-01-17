@@ -107,6 +107,7 @@ def main(unused_argv):
     runner = inference.Runner(use_cpu=FLAGS.use_cpu, use_gpu=use_gpu)
     runner.start(request)
     runner.run(sub_bbox.start[::-1], sub_bbox.size[::-1])
+  runner.stop_executor()
   mpi_comm.barrier()
   sys.exit()
 
