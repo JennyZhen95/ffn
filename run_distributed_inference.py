@@ -21,6 +21,7 @@ Inference is performed within a single process.
 
 import os
 import time
+import logging
 
 from google.protobuf import text_format
 from absl import app
@@ -50,11 +51,12 @@ flags.DEFINE_list('subvolume_size', '512,512,128', '"valid"subvolume_size to iss
 flags.DEFINE_list('overlap', '32,32,16', 'overlap of bbox')
 flags.DEFINE_boolean('use_cpu', False, 'Use CPU instead of GPU')
 flags.DEFINE_integer('num_gpu', 0, 'Allocate on different GPUs')
-
+flags.DEFINE_boolean('verbose', False, 'logging level')
 
 def divide_bounding_box(bbox, subvolume_size, overlap):
   """divide up into valid subvolumes."""
   # deal with parsed bbox missing "end" attr
+
   start = geom_utils.ToNumpy3Vector(bbox.start)
   size = geom_utils.ToNumpy3Vector(bbox.size)
 
@@ -70,6 +72,11 @@ def divide_bounding_box(bbox, subvolume_size, overlap):
   return [bb for bb in calc.generate_sub_boxes()]
 
 def main(unused_argv):
+  logger = logging.getLogger()
+  if FLAGS.verbose:
+    logger.setLevel(logging.DEBUG)
+  else:
+    logger.setLevel(logging.WARNING)
   start_time = time.time()
   # mpi version
   request = inference_flags.request_from_flags()
@@ -107,7 +114,7 @@ def main(unused_argv):
     runner = inference.Runner(use_cpu=FLAGS.use_cpu, use_gpu=use_gpu)
     runner.start(request)
     runner.run(sub_bbox.start[::-1], sub_bbox.size[::-1])
-  runner.stop_executor()
+    runner.stop_executor()
   mpi_comm.barrier()
   sys.exit()
 
