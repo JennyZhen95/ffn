@@ -44,18 +44,18 @@ flags.DEFINE_float('epsilon', 1e-8, 'Epsilon term for RMSProp and Adam.')
 def optimizer_from_flags():
   lr = FLAGS.learning_rate
   if FLAGS.optimizer == 'momentum':
-    return tf.train.MomentumOptimizer(lr, FLAGS.momentum)
+    return tf.compat.v1.train.MomentumOptimizer(lr, FLAGS.momentum)
   elif FLAGS.optimizer == 'sgd':
-    return tf.train.GradientDescentOptimizer(lr)
+    return tf.compat.v1.train.GradientDescentOptimizer(lr)
   elif FLAGS.optimizer == 'adagrad':
-    return tf.train.AdagradOptimizer(lr)
+    return tf.compat.v1.train.AdagradOptimizer(lr)
   elif FLAGS.optimizer == 'adam':
-    return tf.train.AdamOptimizer(learning_rate=lr,
+    return tf.compat.v1.train.AdamOptimizer(learning_rate=lr,
                                   beta1=FLAGS.adam_beta1,
                                   beta2=FLAGS.adam_beta2,
                                   epsilon=FLAGS.epsilon)
   elif FLAGS.optimizer == 'rmsprop':
-    return tf.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
+    return tf.compat.v1.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
                                      momentum=FLAGS.momentum,
                                      epsilon=FLAGS.epsilon)
   else:
@@ -65,18 +65,18 @@ def optimizer_from_flags():
 def hvd_optimizer_from_flags():
   lr = FLAGS.learning_rate * hvd.size()
   if FLAGS.optimizer == 'momentum':
-    opt = tf.train.MomentumOptimizer(lr, FLAGS.momentum)
+    opt = tf.compat.v1.train.MomentumOptimizer(lr, FLAGS.momentum)
   elif FLAGS.optimizer == 'sgd':
-    opt = tf.train.GradientDescentOptimizer(lr)
+    opt = tf.compat.v1.train.GradientDescentOptimizer(lr)
   elif FLAGS.optimizer == 'adagrad':
-    opt = tf.train.AdagradOptimizer(lr)
+    opt = tf.compat.v1.train.AdagradOptimizer(lr)
   elif FLAGS.optimizer == 'adam':
-    opt = tf.train.AdamOptimizer(learning_rate=lr,
+    opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr,
                                   beta1=FLAGS.adam_beta1,
                                   beta2=FLAGS.adam_beta2,
                                   epsilon=FLAGS.epsilon)
   elif FLAGS.optimizer == 'rmsprop':
-    opt = tf.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
+    opt = tf.compat.v1.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
                                     momentum=FLAGS.momentum,
                                     epsilon=FLAGS.epsilon)
   else:

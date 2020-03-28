@@ -28,8 +28,8 @@ import tempfile
 
 import h5py
 import numpy as np
-
-from tensorflow import gfile
+import tensorflow as tf
+gfile = tf.io.gfile
 from . import align
 from . import segmentation
 from ..utils import bounding_box
@@ -141,8 +141,8 @@ def atomic_file(path, mode='w+b'):
     yield tmp
     tmp.flush()
     # Necessary when the destination is on CNS.
-    gfile.Copy(tmp.name, '%s.tmp' % path, overwrite=True)
-  gfile.Rename('%s.tmp' % path, path, overwrite=True)
+    gfile.copy(tmp.name, '%s.tmp' % path, overwrite=True)
+  gfile.rename('%s.tmp' % path, path, overwrite=True)
 
 
 def quantize_probability(prob):
@@ -174,7 +174,7 @@ def save_subvolume(labels, origins, output_path, **misc_items):
         in the output file
   """
   seg = segmentation.reduce_id_bits(labels)
-  gfile.MakeDirs(os.path.dirname(output_path))
+  gfile.makedirs(os.path.dirname(output_path))
   with atomic_file(output_path) as fd:
     np.savez_compressed(fd,
                         segmentation=seg,
@@ -268,16 +268,16 @@ def get_existing_subvolume_path(segmentation_dir, corner, allow_cpoint=False):
     is found
   """
   target_path = segmentation_path(segmentation_dir, corner)
-  if gfile.Exists(target_path):
+  if gfile.exists(target_path):
     return target_path
 
   target_path = legacy_segmentation_path(segmentation_dir, corner)
-  if gfile.Exists(target_path):
+  if gfile.exists(target_path):
     return target_path
 
   if allow_cpoint:
     target_path = checkpoint_path(segmentation_dir, corner)
-    if gfile.Exists(target_path):
+    if gfile.exists(target_path):
       return target_path
 
   return None
@@ -285,12 +285,12 @@ def get_existing_subvolume_path(segmentation_dir, corner, allow_cpoint=False):
 
 def threshold_segmentation(segmentation_dir, corner, labels, threshold):
   prob_path = object_prob_path(segmentation_dir, corner)
-  if not gfile.Exists(prob_path):
+  if not gfile.exists(prob_path):
     prob_path = legacy_object_prob_path(segmentation_dir, corner)
-    if not gfile.Exists(prob_path):
+    if not gfile.exists(prob_path):
       raise ValueError('Cannot find probability map %s' % prob_path)
 
-  with gfile.Open(prob_path, 'rb') as f:
+  with gfile.GFile(prob_path, 'rb') as f:
     data = np.load(f)
     if 'qprob' not in data:
       raise ValueError('Invalid FFN probability map.')
@@ -305,7 +305,7 @@ def load_origins(segmentation_dir, corner):
     raise ValueError('Segmentation not found: %s, %s' % (segmentation_dir,
                                                          corner))
 
-  with gfile.Open(target_path, 'rb') as f:
+  with gfile.GFile(target_path, 'rb') as f:
     data = np.load(f)
     return data['origins'].item()
 

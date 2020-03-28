@@ -71,12 +71,13 @@ class FFNModel(object):
           self.shifts.append((dx, dy, dz))
 
     if define_global_step:
-      self.global_step = tf.Variable(0, name='global_step', trainable=False)
+      # self.global_step = tf.Variable(0, name='global_step', trainable=False)
+      self.global_step = tf.compat.v1.train.get_or_create_global_step()
 
     # The seed is always a placeholder which is fed externally from the
     # training/inference drivers.
-    self.input_seed = tf.placeholder(tf.float32, name='seed')
-    self.input_patches = tf.placeholder(tf.float32, name='patches')
+    self.input_seed = tf.compat.v1.placeholder(tf.float32, name='seed')
+    self.input_patches = tf.compat.v1.placeholder(tf.float32, name='patches')
 
     # For training, labels should be defined as a TF object.
     self.labels = None
@@ -129,22 +130,22 @@ class FFNModel(object):
     pixel_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits,
                                                          labels=self.labels)
     pixel_loss *= self.loss_weights
-    self.loss = tf.reduce_mean(pixel_loss)
-    tf.summary.scalar('pixel_loss', self.loss)
-    self.loss = tf.verify_tensor_all_finite(self.loss, 'Invalid loss detected')
+    self.loss = tf.reduce_mean(input_tensor=pixel_loss)
+    tf.compat.v1.summary.scalar('pixel_loss', self.loss)
+    self.loss = tf.compat.v1.verify_tensor_all_finite(self.loss, 'Invalid loss detected')
 
   def set_up_optimizer(self, loss=None, max_gradient_entry_mag=0.7):
     """Sets up the training op for the model."""
     if loss is None:
       loss = self.loss
-    tf.summary.scalar('optimizer_loss', self.loss)
+    tf.compat.v1.summary.scalar('optimizer_loss', self.loss)
 
     opt = optimizer.hvd_optimizer_from_flags()
     grads_and_vars = opt.compute_gradients(loss)
 
     for g, v in grads_and_vars:
       if g is None:
-        tf.logging.error('Gradient is None: %s', v.op.name)
+        tf.compat.v1.logging.error('Gradient is None: %s', v.op.name)
 
     if max_gradient_entry_mag > 0.0:
       grads_and_vars = [(tf.clip_by_value(g,
@@ -152,15 +153,15 @@ class FFNModel(object):
                                           +max_gradient_entry_mag), v)
                         for g, v, in grads_and_vars]
 
-    trainables = tf.trainable_variables()
+    trainables = tf.compat.v1.trainable_variables()
     if trainables:
       for var in trainables:
-        tf.summary.histogram(var.name.replace(':0', ''), var)
+        tf.compat.v1.summary.histogram(var.name.replace(':0', ''), var)
     for grad, var in grads_and_vars:
-      tf.summary.histogram(
+      tf.compat.v1.summary.histogram(
           'gradients/%s' % var.name.replace(':0', ''), grad)
 
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    update_ops = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
       self.train_op = opt.apply_gradients(grads_and_vars,
                                           global_step=self.global_step,
@@ -185,7 +186,7 @@ class FFNModel(object):
     if dx == 0 and dy == 0 and dz == 0:
       seed += update
     else:
-      seed += tf.pad(update, [[0, 0],
+      seed += tf.pad(tensor=update, paddings=[[0, 0],
                               [dz // 2, dz - dz // 2],
                               [dy // 2, dy - dy // 2],
                               [dx // 2, dx - dx // 2],

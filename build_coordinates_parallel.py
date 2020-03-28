@@ -156,9 +156,9 @@ def main(argv):
   sharded_fname = '%s-%s-of-%s' % (FLAGS.coordinate_output, str(mpi_rank).zfill(5), str(mpi_size).zfill(5))
   logging.info(sharded_fname)
 
-  record_options = tf.python_io.TFRecordOptions(
-      tf.python_io.TFRecordCompressionType.GZIP)
-  with tf.python_io.TFRecordWriter(sharded_fname,
+  record_options = tf.io.TFRecordOptions(
+      tf.compat.v1.python_io.TFRecordCompressionType.GZIP)
+  with tf.io.TFRecordWriter(sharded_fname,
                                    options=record_options) as writer:
     for i, coord_idx in tqdm(subset_indices):
       z, y, x = np.unravel_index(coord_idx, vol_shapes[i])

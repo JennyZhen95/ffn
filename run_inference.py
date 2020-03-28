@@ -25,7 +25,7 @@ import time
 from google.protobuf import text_format
 from absl import app
 from absl import flags
-from tensorflow import gfile
+gfile = tf.io.gfile
 
 from ffn.utils import bounding_box_pb2
 from ffn.inference import inference
@@ -41,8 +41,8 @@ flags.DEFINE_string('bounding_box', None,
 def main(unused_argv):
   request = inference_flags.request_from_flags()
 
-  if not gfile.Exists(request.segmentation_output_dir):
-    gfile.MakeDirs(request.segmentation_output_dir)
+  if not gfile.exists(request.segmentation_output_dir):
+    gfile.makedirs(request.segmentation_output_dir)
 
   bbox = bounding_box_pb2.BoundingBox()
   text_format.Parse(FLAGS.bounding_box, bbox)
@@ -53,7 +53,7 @@ def main(unused_argv):
              (bbox.size.z, bbox.size.y, bbox.size.x))
 
   counter_path = os.path.join(request.segmentation_output_dir, 'counters.txt')
-  if not gfile.Exists(counter_path):
+  if not gfile.exists(counter_path):
     runner.counters.dump(counter_path)
 
 

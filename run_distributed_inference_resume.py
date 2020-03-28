@@ -25,7 +25,7 @@ import time
 from google.protobuf import text_format
 from absl import app
 from absl import flags
-from tensorflow import gfile
+gfile = tf.io.gfile
 import os
 from os.path import join, basename, dirname
 import re
@@ -100,8 +100,8 @@ def main(unused_argv):
   # mpi version
   request = inference_flags.request_from_flags()
   if mpi_rank == 0:
-    if not gfile.Exists(request.segmentation_output_dir):
-      gfile.MakeDirs(request.segmentation_output_dir)
+    if not gfile.exists(request.segmentation_output_dir):
+      gfile.makedirs(request.segmentation_output_dir)
 
     # bbox = bounding_box_pb2.BoundingBox()
     # text_format.Parse(FLAGS.bounding_box, bbox)

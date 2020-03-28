@@ -26,7 +26,7 @@ from scipy import ndimage
 # from google3.research.neuromancer.segmentation.ffn import resegmentation_pb2
 # from google3.research.neuromancer.segmentation.ffn import storage
 # from google3.research.neuromancer.segmentation.python import pywrapsegment_util
-from tensorflow import gfile
+gfile = tf.io.gfile
 from absl import logging
 from . import resegmentation_pb2
 from . import storage
@@ -128,7 +128,7 @@ def evaluate_endpoint_resegmentation(filename, seg_volume,
   sr = result.segmentation_radius
   sr.z, sr.y, sr.x = resegmentation_radius
 
-  with gfile.Open(filename, 'r') as f:
+  with gfile.GFile(filename, 'r') as f:
     data = np.load(f)
     prob = storage.dequantize_probability(data['probs'])
     prob = np.nan_to_num(prob)  # nans indicate unvisited voxels
@@ -197,7 +197,7 @@ def evaluate_pair_resegmentation(filename, seg_volume,
   sr = result.segmentation_radius
   sr.z, sr.y, sr.x = resegmentation_radius
 
-  # with gfile.Open(filename, 'r') as f:
+  # with gfile.GFile(filename, 'r') as f:
   with open(filename, 'rb') as f:
     data = np.load(f, allow_pickle=True)
     prob = storage.dequantize_probability(data['probs'])

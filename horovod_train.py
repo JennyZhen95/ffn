@@ -45,9 +45,11 @@ from scipy.special import expit
 from scipy.special import logit
 import tensorflow as tf
 
+from tensorflow.python.framework import ops
+
 from absl import app
 from absl import flags
-from tensorflow import gfile
+gfile = tf.io.gfile
 
 from ffn.inference import movement
 from ffn.training import mask
@@ -65,6 +67,7 @@ from mpi4py import MPI
 
 comm = MPI.COMM_WORLD
 rank = comm.rank
+tf.compat.v1.disable_eager_execution()
 
 FLAGS = flags.FLAGS
 
@@ -158,12 +161,12 @@ class EvalTracker(object):
   """Tracks eval results over multiple training steps."""
 
   def __init__(self, eval_shape):
-    self.eval_labels = tf.placeholder(
+    self.eval_labels = tf.compat.v1.placeholder(
         tf.float32, [1] + eval_shape + [1], name='eval_labels')
-    self.eval_preds = tf.placeholder(
+    self.eval_preds = tf.compat.v1.placeholder(
         tf.float32, [1] + eval_shape + [1], name='eval_preds')
     self.eval_loss = tf.reduce_mean(
-        tf.nn.sigmoid_cross_entropy_with_logits(
+        input_tensor=tf.nn.sigmoid_cross_entropy_with_logits(
             logits=self.eval_preds, labels=self.eval_labels))
     self.reset()
     self.eval_threshold = logit(0.9)
@@ -221,9 +224,9 @@ class EvalTracker(object):
     axis_names = 'zyx'
     axis_names = axis_names.replace(axis_names[slice_axis], '')
 
-    return tf.Summary.Value(
+    return tf.compat.v1.Summary.Value(
         tag='final_%s' % axis_names[::-1],
-        image=tf.Summary.Image(
+        image=tf.compat.v1.Summary.Image(
             height=h, width=w * 3, colorspace=1,  # greyscale
             encoded_image_string=buf.getvalue()))
 
@@ -296,9 +299,9 @@ class EvalTracker(object):
     axis_names = 'zyx'
     axis_names = axis_names.replace(axis_names[slice_axis], '')
 
-    return tf.Summary.Value(
+    return tf.compat.v1.Summary.Value(
         tag='final_%s' % axis_names[::-1],
-        image=tf.Summary.Image(
+        image=tf.compat.v1.Summary.Image(
             height=h, width=w * 3, colorspace=1,  # greyscale
             encoded_image_string=buf.getvalue()))
 
@@ -346,23 +349,23 @@ class EvalTracker(object):
 
     summaries = (
         list(self.images_xy) + list(self.images_xz) + list(self.images_yz) + [
-            tf.Summary.Value(tag='masked_voxel_fraction',
+            tf.compat.v1.Summary.Value(tag='masked_voxel_fraction',
                              simple_value=(self.masked_voxels /
                                            self.total_voxels)),
-            tf.Summary.Value(tag='eval/patch_loss',
+            tf.compat.v1.Summary.Value(tag='eval/patch_loss',
                              simple_value=self.loss / self.num_patches),
-            tf.Summary.Value(tag='eval/patches',
+            tf.compat.v1.Summary.Value(tag='eval/patches',
                              simple_value=self.num_patches),
-            tf.Summary.Value(tag='eval/accuracy',
+            tf.compat.v1.Summary.Value(tag='eval/accuracy',
                              simple_value=(self.tp + self.tn) / (
                                  self.tp + self.tn + self.fp + self.fn)),
-            tf.Summary.Value(tag='eval/precision',
+            tf.compat.v1.Summary.Value(tag='eval/precision',
                              simple_value=precision),
-            tf.Summary.Value(tag='eval/recall',
+            tf.compat.v1.Summary.Value(tag='eval/recall',
                              simple_value=recall),
-            tf.Summary.Value(tag='eval/specificity',
+            tf.compat.v1.Summary.Value(tag='eval/specificity',
                              simple_value=self.tn / max(self.tn + self.fp, 1)),
-            tf.Summary.Value(tag='eval/f1',
+            tf.compat.v1.Summary.Value(tag='eval/f1',
                              simple_value=(2.0 * precision * recall /
                                            (precision + recall)))
         ])
@@ -449,9 +452,9 @@ def read_h5_sources():
   return image_volume_map, label_volume_map
 
 def parser(proto):
-  examples = tf.parse_single_example(proto, features=dict(
-      center=tf.FixedLenFeature(shape=[1, 3], dtype=tf.int64),
-      label_volume_name=tf.FixedLenFeature(shape=[1], dtype=tf.string),
+  examples = tf.io.parse_single_example(serialized=proto, features=dict(
+      center=tf.io.FixedLenFeature(shape=[1, 3], dtype=tf.int64),
+      label_volume_name=tf.io.FixedLenFeature(shape=[1], dtype=tf.string),
   ))
   coord = examples['center']
   volname = examples['label_volume_name']
@@ -522,14 +525,14 @@ def h5_distributed_dataset_v2(model, queue_batch=None):
 
   # Fetch a single coordinate and volume name from a queue reading the
   # coordinate files or from saved hard/important examples
-  fnames = tf.matching_files(FLAGS.train_coords+'*')
+  fnames = tf.io.matching_files(FLAGS.train_coords+'*')
   ds = tf.data.TFRecordDataset(fnames, compression_type='GZIP')
   ds = ds.map(parser, num_parallel_calls=tf.data.experimental.AUTOTUNE)
   ds = ds.map(read_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
   ds = ds.prefetch(100)
   # ds = ds.batch(queue_batch)
   ds = ds.shard(hvd.size(), hvd.rank())
-  return ds.make_one_shot_iterator().get_next()
+  return tf.compat.v1.data.make_one_shot_iterator(ds).get_next()
 
 def h5_distributed_dataset(model, queue_batch=None, rank=0):
   if queue_batch is None:
@@ -555,7 +558,7 @@ def h5_distributed_dataset(model, queue_batch=None, rank=0):
 
   # Fetch a single coordinate and volume name from a queue reading the
   # coordinate files or from saved hard/important examples
-  fnames = tf.matching_files(FLAGS.train_coords+'*')
+  fnames = tf.io.matching_files(FLAGS.train_coords+'*')
   logging.info('fnames %s', fnames)
   ds = tf.data.TFRecordDataset(fnames, compression_type='GZIP')
   #ds = tf.data.TFRecordDataset([FLAGS.train_coords], compression_type='GZIP')
@@ -563,7 +566,7 @@ def h5_distributed_dataset(model, queue_batch=None, rank=0):
   ds.prefetch(1000)
   ds = ds.shard(hvd.size(), hvd.rank())
 
-  value = ds.make_one_shot_iterator().get_next()
+  value = tf.compat.v1.data.make_one_shot_iterator(ds).get_next()
   coord, volname = value
 
   # Load object labels (segmentation).
@@ -614,7 +617,7 @@ def h5_distributed_dataset(model, queue_batch=None, rank=0):
   # Create a batch of examples. Note that any TF operation before this line
   # will be hidden behind a queue, so expensive/slow ops can take advantage
   # of multithreading.
-  patches, labels, loss_weights = tf.train.shuffle_batch(
+  patches, labels, loss_weights = tf.compat.v1.train.shuffle_batch(
       [patch, labels, loss_weights], queue_batch,
       num_threads=max(1, FLAGS.batch_size // 2),
       capacity=32 * FLAGS.batch_size,
@@ -628,8 +631,8 @@ def prepare_ffn(model):
   """Creates the TF graph for an FFN."""
   shape = [FLAGS.batch_size] + list(model.pred_mask_size[::-1]) + [1]
 
-  model.labels = tf.placeholder(tf.float32, shape, name='labels')
-  model.loss_weights = tf.placeholder(tf.float32, shape, name='loss_weights')
+  model.labels = tf.compat.v1.placeholder(tf.float32, shape, name='labels')
+  model.loss_weights = tf.compat.v1.placeholder(tf.float32, shape, name='loss_weights')
   model.define_tf_graph()
 
 
@@ -788,8 +791,8 @@ def get_batch(load_example, eval_tracker, model, batch_size, get_offsets):
 
 
 def save_flags():
-  gfile.MakeDirs(FLAGS.train_dir)
-  with gfile.Open(os.path.join(FLAGS.train_dir,
+  gfile.makedirs(FLAGS.train_dir)
+  with gfile.GFile(os.path.join(FLAGS.train_dir,
                                'flags.%d' % time.time()), 'w') as f:
     for mod, flag_list in FLAGS.flags_by_module_dict().items():
       if (mod.startswith('google3.research.neuromancer.tensorflow') or
@@ -812,7 +815,7 @@ def train_ffn(model_cls, **model_kwargs):
     print(load_data_ops)
 
     prepare_ffn(model)
-    merge_summaries_op = tf.summary.merge_all()
+    merge_summaries_op = tf.compat.v1.summary.merge_all()
 
     if FLAGS.task == 0:
       save_flags()
@@ -825,20 +828,33 @@ def train_ffn(model_cls, **model_kwargs):
       hvd.BroadcastGlobalVariablesHook(0),
 
       # Horovod: adjust number of steps based on number of GPUs.
-      tf.train.StopAtStepHook(last_step=FLAGS.max_steps // hvd.size()),
+      tf.estimator.StopAtStepHook(last_step=FLAGS.max_steps // hvd.size()),
 
     ]
  
-    config = tf.ConfigProto()
+    config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     config.gpu_options.visible_device_list = str(hvd.local_rank())
 
     checkpoint_dir = FLAGS.train_dir if hvd.rank() == 0 else None
     summary_writer = None
-    saver = tf.train.Saver(max_to_keep=None, keep_checkpoint_every_n_hours=24)
-    scaffold = tf.train.Scaffold(saver=saver)
+    saver = tf.compat.v1.train.Saver(max_to_keep=None, keep_checkpoint_every_n_hours=24)
+    scaffold = tf.compat.v1.train.Scaffold(saver=saver)
 
-    with tf.train.MonitoredTrainingSession(
+    # model.global_step = None
+    # logging.warning('GLOBAL STEP %s %s', model.global_step, model.global_step.dtype.base_dtype.is_integer)
+    # logging.warning('GLOBAL_STEP assert')
+    # tf.compat.v1.train.training_utils.assert_global_step(model.global_step)
+    # tf.train.training_utils.assert_global_step(model.global_step)
+
+  
+    # global_step = tf.Variable(0, name='global_step', trainable=False)
+    # g = ops.get_default_graph()
+    # logging.warning('GRAPH %s', g)
+    # glst = g.get_collection(ops.GraphKeys.GLOBAL_STEP)
+    # logging.warning('GRAPH GLOBAL%s', glst)
+
+    with tf.compat.v1.train.MonitoredTrainingSession(
         master=FLAGS.master,
         is_chief=(FLAGS.task == 0),
         checkpoint_dir=checkpoint_dir,
@@ -860,9 +876,9 @@ def train_ffn(model_cls, **model_kwargs):
 
 
       if rank == 0:
-        summary_writer = tf.summary.FileWriterCache.get(FLAGS.train_dir)
+        summary_writer = tf.compat.v1.summary.FileWriterCache.get(FLAGS.train_dir)
         summary_writer.add_session_log(
-            tf.summary.SessionLog(status=tf.summary.SessionLog.START), step)
+            tf.compat.v1.summary.SessionLog(status=tf.compat.v1.summary.SessionLog.START), step)
 
       fov_shifts = list(model.shifts)  # x, y, z
       if FLAGS.shuffle_moves:
@@ -905,7 +921,7 @@ def train_ffn(model_cls, **model_kwargs):
         # Record summaries.
         if hvd.rank() == 0 and summ is not None:
           logging.info('Saving summaries.')
-          summ = tf.Summary.FromString(summ)
+          summ = tf.compat.v1.Summary.FromString(summ)
 
           # Compute a loss over the whole training patch (i.e. more than a
           # single-step field of view of the network). This quantifies the

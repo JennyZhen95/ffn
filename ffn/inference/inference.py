@@ -34,7 +34,8 @@ from skimage import transform
 
 import tensorflow as tf
 
-from tensorflow import gfile
+# gfile = tf.io.gfile
+gfile = tf.io.gfile
 from . import align
 from . import executor
 from . import inference_pb2
@@ -585,7 +586,7 @@ class Canvas(object):
         # Too close to an existing segment?
         low = np.array(pos) - mbd
         high = np.array(pos) + mbd + 1
-        sel = [slice(s, e) for s, e in zip(low, high)]
+        sel = tuple([slice(s, e) for s, e in zip(low, high)])
         if np.any(self.segmentation[sel] > 0):
           logging.debug('Too close to existing segment.')
           self.segmentation[pos] = -1
@@ -618,9 +619,9 @@ class Canvas(object):
         # covering the area that was actually changed by the FFN. In case the
         # segment is going to be rejected due to small size, this can
         # significantly reduce processing time.
-        sel = [slice(max(s, 0), e + 1) for s, e in zip(
+        sel = tuple([slice(max(s, 0), e + 1) for s, e in zip(
             self._min_pos - self._pred_size // 2,
-            self._max_pos + self._pred_size // 2)]
+            self._max_pos + self._pred_size // 2)])
 
         # We only allow creation of new segments in areas that are currently
         # empty.
@@ -772,6 +773,7 @@ class Canvas(object):
   def restore_checkpoint(self, path):
     """Restores state from the checkpoint at `path`."""
     self.log_info('Restoring inference checkpoint: %s', path)
+    # with gfile.GFile(path, 'r') as f:
     with open(path, 'rb') as f:
       data = np.load(f, allow_pickle=True)
 
@@ -804,7 +806,7 @@ class Canvas(object):
     """Saves a inference checkpoint to `path`."""
     self.log_info('Saving inference checkpoint to %s.', path)
     with timer_counter(self.counters, 'save_checkpoint'):
-      gfile.MakeDirs(os.path.dirname(path))
+      gfile.makedirs(os.path.dirname(path))
       with storage.atomic_file(path) as fd:
         seed_policy_state = None
         if self.seed_policy is not None:
@@ -885,8 +887,8 @@ class Runner(object):
 
     logging.debug('Received request:\n%s', request)
 
-    if not gfile.Exists(request.segmentation_output_dir):
-      gfile.MakeDirs(request.segmentation_output_dir)
+    if not gfile.exists(request.segmentation_output_dir):
+      gfile.makedirs(request.segmentation_output_dir)
 
     with timer_counter(self.counters, 'volstore-open'):
       # Disabling cache compression can improve access times by 20-30%
@@ -930,7 +932,7 @@ class Runner(object):
       self._shift_mask_volume = _open_or_none(request.shift_mask)
 
     if request.reference_histogram:
-      with gfile.Open(request.reference_histogram, 'r') as f:
+      with gfile.GFile(request.reference_histogram, 'r') as f:
         data = np.load(f)
         self._reference_lut = data['lut']
     else:
@@ -940,16 +942,16 @@ class Runner(object):
 
     if session is None:
       if self.use_cpu:
-        config = tf.ConfigProto(
+        config = tf.compat.v1.ConfigProto(
           device_count={'GPU': 0})
       elif self.use_gpu is not None:
-        gpu_options = tf.GPUOptions(visible_device_list=self.use_gpu, allow_growth=True)
-        config=tf.ConfigProto(gpu_options=gpu_options)
+        gpu_options = tf.compat.v1.GPUOptions(visible_device_list=self.use_gpu, allow_growth=True)
+        config=tf.compat.v1.ConfigProto(gpu_options=gpu_options)
       else:
-        config = tf.ConfigProto()
+        config = tf.compat.v1.ConfigProto()
         config.gpu_options.allow_growth = True
-      tf.reset_default_graph()
-      session = tf.Session(config=config)
+      tf.compat.v1.reset_default_graph()
+      session = tf.compat.v1.Session(config=config)
     self.session = session
     logging.info('Available TF devices: %r', self.session.list_devices())
 
@@ -970,7 +972,7 @@ class Runner(object):
         self.model, self.session, self.counters, batch_size)
     self.movement_policy_fn = movement.get_policy_fn(request, self.model)
 
-    self.saver = tf.train.Saver()
+    self.saver = tf.compat.v1.train.Saver()
     self._load_model_checkpoint(request.model_checkpoint_path)
 
     self.executor.start_server()
@@ -1371,14 +1373,14 @@ class Runner(object):
     cpoint_path = storage.checkpoint_path(
         self.request.segmentation_output_dir, corner)
 
-    if gfile.Exists(seg_path):
+    if gfile.exists(seg_path):
       return None
 
     canvas, alignment = self.make_canvas(corner, subvol_size)
     if canvas is None:
       return None
 
-    if gfile.Exists(cpoint_path):
+    if gfile.exists(cpoint_path):
       canvas.restore_checkpoint(cpoint_path)
 
     if self.request.alignment_options.save_raw:

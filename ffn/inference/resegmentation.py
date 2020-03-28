@@ -30,8 +30,8 @@ import numpy as np
 
 from scipy import ndimage
 from scipy.special import expit
-
-from tensorflow import gfile
+import tensorflow as tf
+gfile = tf.io.gfile
 
 from . import storage
 from .inference_utils import timer_counter
@@ -70,13 +70,13 @@ def get_target_path(request, point_num):
     m.update(str(id_a))
     m.update(str(id_b))
     output_dir = os.path.join(output_dir, m.hexdigest()[:request.subdir_digits])
-  gfile.MakeDirs(output_dir)
+  gfile.makedirs(output_dir)
 
   # Terminate early if the output already exists.
   dp = request.points[point_num].point
   target_path = os.path.join(output_dir, '%d-%d_at_%d_%d_%d.npz' % (
       id_a, id_b, dp.x, dp.y, dp.z))
-  if gfile.Exists(target_path):
+  if gfile.exists(target_path):
     logging.info('Output already exists: %s', target_path)
     return
 

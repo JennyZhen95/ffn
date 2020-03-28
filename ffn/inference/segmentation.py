@@ -58,7 +58,8 @@ def make_labels_contiguous(labels):
   relabel = scipy.sparse.csr_matrix((new_ids, (row_indices, col_indices)))
   # Index with a 2D array so that the output is a sparse matrix.
   labels2d = labels.reshape(1, labels.size)
-  relabeled = relabel[0, labels2d]
+  relabeled = relabel[0, labels2d[0]]
+  # relabeled = relabel[labels2d]
   return relabeled.toarray().reshape(labels.shape), zip(orig_ids, new_ids)
 
 

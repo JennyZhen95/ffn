@@ -195,9 +195,9 @@ class ThreadingBatchExecutor(BatchExecutor):
             if client_id >= 0:
               self.total_clients += 1
               self.active_clients += 1
-              logging.info('client %d starting', client_id)
+              logging.warning('client %d starting', client_id)
             else:
-              logging.info('client %d terminating', -client_id - 1)
+              logging.warning('client %d terminating', -client_id - 1)
               self.active_clients -= 1
           else:
             client_id, seed, image, fetches = data

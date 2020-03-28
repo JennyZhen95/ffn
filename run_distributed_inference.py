@@ -21,15 +21,17 @@ Inference is performed within a single process.
 
 import os
 import time
-import logging
 
 from google.protobuf import text_format
 from absl import app
 from absl import flags
-from tensorflow import gfile
+import logging
+# gfile = tf.io.gfile
 import os
 import numpy as np
 import sys
+import tensorflow as tf
+from tqdm import tqdm
 
 from ffn.utils import bounding_box_pb2
 from ffn.inference import inference
@@ -42,6 +44,9 @@ mpi_comm = MPI.COMM_WORLD
 mpi_rank = mpi_comm.Get_rank()
 mpi_size = mpi_comm.Get_size()
 
+gfile = tf.io.gfile
+tf.compat.v1.disable_eager_execution()
+
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('bounding_box', None,
@@ -53,10 +58,11 @@ flags.DEFINE_boolean('use_cpu', False, 'Use CPU instead of GPU')
 flags.DEFINE_integer('num_gpu', 0, 'Allocate on different GPUs')
 flags.DEFINE_boolean('verbose', False, 'logging level')
 
+
+
 def divide_bounding_box(bbox, subvolume_size, overlap):
   """divide up into valid subvolumes."""
   # deal with parsed bbox missing "end" attr
-
   start = geom_utils.ToNumpy3Vector(bbox.start)
   size = geom_utils.ToNumpy3Vector(bbox.size)
 
@@ -72,17 +78,25 @@ def divide_bounding_box(bbox, subvolume_size, overlap):
   return [bb for bb in calc.generate_sub_boxes()]
 
 def main(unused_argv):
-  logger = logging.getLogger()
+  # print('Verbose', FLAGS.verbose)
+  print('log_level', FLAGS.verbose)
   if FLAGS.verbose:
+    logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
+    # logging.basicConfig(level=logging.DEBUG)
   else:
+    logger = logging.getLogger()
     logger.setLevel(logging.WARNING)
+    # logging.basicConfig(level=logging.WARNING)
+
+
   start_time = time.time()
   # mpi version
   request = inference_flags.request_from_flags()
   if mpi_rank == 0:
-    if not gfile.Exists(request.segmentation_output_dir):
-      gfile.MakeDirs(request.segmentation_output_dir)
+    # if not gfile.exists(request.segmentation_output_dir):
+    if not gfile.exists(request.segmentation_output_dir):
+      gfile.makedirs(request.segmentation_output_dir)
 
     bbox = bounding_box_pb2.BoundingBox()
     text_format.Parse(FLAGS.bounding_box, bbox)
@@ -115,8 +129,12 @@ def main(unused_argv):
     runner.start(request)
     runner.run(sub_bbox.start[::-1], sub_bbox.size[::-1])
     runner.stop_executor()
-  mpi_comm.barrier()
-  sys.exit()
+  # logging.warning('reached rank %d', mpi_rank)
+  # mpi_comm.barrier()
+  # sys.exit()
+  counter_path = os.path.join(request.segmentation_output_dir, 'counters_%d.txt' % mpi_rank)
+  if not gfile.exists(counter_path):
+    runner.counters.dump(counter_path)
 
   #end_time = time.time()
   #print('>> ', end_time - start_time)
