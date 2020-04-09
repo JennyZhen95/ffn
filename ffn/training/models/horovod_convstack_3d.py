@@ -63,7 +63,7 @@ class HorovodConvStack3DFFNModel(convstack_3d.ConvStack3DFFNModel):
       loss = self.loss
     tf.compat.v1.summary.scalar('optimizer_loss', self.loss)
 
-    opt = optimizer.hvd_optimizer_from_flags(hvd.size())
+    opt = optimizer.hvd_optimizer_from_flags()
     opt = hvd.DistributedOptimizer(opt)
     grads_and_vars = opt.compute_gradients(loss)
 

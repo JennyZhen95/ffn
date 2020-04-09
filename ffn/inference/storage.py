@@ -225,9 +225,9 @@ def get_corner_from_path(path):
 def get_existing_corners(segmentation_dir):
   corners = []
   # Legacy path format.
-  for path in gfile.Glob(os.path.join(segmentation_dir, 'seg-*_*_*.npz')):
+  for path in gfile.glob(os.path.join(segmentation_dir, 'seg-*_*_*.npz')):
     corners.append(get_corner_from_path(path))
-  for path in gfile.Glob(os.path.join(segmentation_dir, '*/*/seg-*_*_*.npz')):
+  for path in gfile.glob(os.path.join(segmentation_dir, '*/*/seg-*_*_*.npz')):
     corners.append(get_corner_from_path(path))
   return corners
 
@@ -391,10 +391,15 @@ def build_mask(masks, corner, subvol_size, mask_volume_map=None,
         clipped_corner, clipped_size = clip_subvolume_to_bounds(
             src_corner, src_size, volume)
         clipped_end = clipped_corner + clipped_size
+        # if volume.ndim == 4:
         mask = volume[:,  #
                       clipped_corner[0]:clipped_end[0],  #
                       clipped_corner[1]:clipped_end[1],  #
                       clipped_corner[2]:clipped_end[2]]
+        # elif volume.ndim == 3:
+        #   mask = volume[clipped_corner[0]:clipped_end[0],  #
+        #                 clipped_corner[1]:clipped_end[1],  #
+        #                 clipped_corner[2]:clipped_end[2]]
       else:
         logging.fatal('Unsupported mask source: %s', source_type)
 
@@ -422,6 +427,7 @@ def build_mask(masks, corner, subvol_size, mask_volume_map=None,
     else:
       final_mask |= curr_mask
 
+  print(np.sum(final_mask))
   return final_mask
 
 

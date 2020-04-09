@@ -21,7 +21,7 @@ from __future__ import print_function
 import tensorflow as tf
 
 from . import optimizer
-
+tf.compat.v1.disable_eager_execution()
 
 class FFNModel(object):
   """Base class for FFN models."""

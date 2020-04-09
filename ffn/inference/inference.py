@@ -983,6 +983,8 @@ class Runner(object):
 
     if self.request.masks:
       with timer_counter(self.counters, 'load-mask'):
+        # print('mask info %s' % self.request.masks)
+        print('mask_info %s' % self._mask_volumes)
         final_mask = storage.build_mask(self.request.masks,
                                         corner, subvol_size,
                                         self._mask_volumes,
@@ -1394,7 +1396,8 @@ class Runner(object):
 
     # Attempt to remove the checkpoint file now that we no longer need it.
     try:
-      gfile.Remove(cpoint_path)
+      # gfile.Remove(cpoint_path)
+      gfile.remove(cpoint_path)
     except:  # pylint: disable=bare-except
       pass
 
