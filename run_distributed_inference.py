@@ -28,6 +28,7 @@ from absl import flags
 import logging
 # gfile = tf.io.gfile
 import os
+import glob
 import numpy as np
 import sys
 import tensorflow as tf
@@ -56,6 +57,7 @@ flags.DEFINE_list('subvolume_size', '512,512,128', '"valid"subvolume_size to iss
 flags.DEFINE_list('overlap', '32,32,16', 'overlap of bbox')
 flags.DEFINE_boolean('use_cpu', False, 'Use CPU instead of GPU')
 flags.DEFINE_integer('num_gpu', 0, 'Allocate on different GPUs')
+flags.DEFINE_boolean('resume', False, 'Whether resuming from cpoints')
 flags.DEFINE_boolean('verbose', False, 'logging level')
 
 
@@ -76,6 +78,21 @@ def divide_bounding_box(bbox, subvolume_size, overlap):
     back_shift_small_sub_boxes=False)
   
   return [bb for bb in calc.generate_sub_boxes()]
+def find_unfinished(sub_bboxes, root_output_dir):
+  filtered_sub_bboxes = []
+  for sub_bbox in sub_bboxes:
+    out_name = 'seg-%d_%d_%d_%d_%d_%d' % (
+      sub_bbox.start[0], sub_bbox.start[1], sub_bbox.start[2], 
+      sub_bbox.size[0], sub_bbox.size[1], sub_bbox.size[2])
+    segmentation_output_dir = os.path.join(root_output_dir, out_name)
+    npzs = glob.glob(os.path.join(segmentation_output_dir, '**/*.npz'), recursive=True)
+    if len(npzs):
+      continue
+    else:
+      filtered_sub_bboxes.append(sub_bbox)
+  logging.warning('pre-post filter: %s %s', len(sub_bboxes), len(filtered_sub_bboxes))
+  return filtered_sub_bboxes
+
 
 def main(unused_argv):
   # print('Verbose', FLAGS.verbose)
@@ -97,6 +114,7 @@ def main(unused_argv):
     # if not gfile.exists(request.segmentation_output_dir):
     if not gfile.exists(request.segmentation_output_dir):
       gfile.makedirs(request.segmentation_output_dir)
+    root_output_dir = request.segmentation_output_dir
 
     bbox = bounding_box_pb2.BoundingBox()
     text_format.Parse(FLAGS.bounding_box, bbox)
@@ -104,8 +122,10 @@ def main(unused_argv):
     subvolume_size = np.array([int(i) for i in FLAGS.subvolume_size])
     overlap = np.array([int(i) for i in FLAGS.overlap])
     sub_bboxes = divide_bounding_box(bbox, subvolume_size, overlap)
+    if FLAGS.resume:
+      sub_bboxes = find_unfinished(sub_bboxes, root_output_dir)
+
     sub_bboxes = np.array_split(np.array(sub_bboxes), mpi_size)
-    root_output_dir = request.segmentation_output_dir
   else:
     sub_bboxes = None
     root_output_dir = None
