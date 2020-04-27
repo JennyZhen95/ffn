@@ -36,6 +36,7 @@ message DecoratedVolume {
   // If left unspecified, the undecorated volume is used.
   optional string decorator_specs = 2;
   optional string axes = 5;
+  optional int32 mip = 6;
 }
 
 // TODO(mjanusz): Move the mask configuration to a separate proto and start

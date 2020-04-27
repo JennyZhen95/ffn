@@ -26,6 +26,7 @@ from scipy import ndimage
 # from google3.research.neuromancer.segmentation.ffn import resegmentation_pb2
 # from google3.research.neuromancer.segmentation.ffn import storage
 # from google3.research.neuromancer.segmentation.python import pywrapsegment_util
+import tensorflow as tf
 gfile = tf.io.gfile
 from absl import logging
 from . import resegmentation_pb2

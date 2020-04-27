@@ -106,7 +106,12 @@ def decorated_volume(settings, **kwargs):
         transpose = (3, 2, 1, 0)
       else:
         raise ValueError('Unknow axes type')
-    c_vol = cloudvolume.CloudVolume('file://%s' % settings.precomputed, mip=0, parallel=False, progress=False)
+    if settings.HasField('mip'):
+      mip = int(settings.mip)
+    else:
+      mip = 0
+    c_vol = cloudvolume.CloudVolume('file://%s' % settings.precomputed, 
+      mip=mip, parallel=False, progress=False)
     volume = TransposedCloudVolume(c_vol, transpose=transpose)
 
   else:
