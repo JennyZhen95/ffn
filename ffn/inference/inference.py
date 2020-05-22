@@ -983,8 +983,6 @@ class Runner(object):
 
     if self.request.masks:
       with timer_counter(self.counters, 'load-mask'):
-        # print('mask info %s' % self.request.masks)
-        print('mask_info %s' % self._mask_volumes)
         final_mask = storage.build_mask(self.request.masks,
                                         corner, subvol_size,
                                         self._mask_volumes,

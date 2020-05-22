@@ -15,7 +15,6 @@ setup(
             'run_inference.py', 
             'run_inference_at.py', 
             'run_distributed_inference.py', 
-            'run_distributed_inference_resume.py', 
             'train.py',
             'horovod_train.py'],
 	url		= 'https://github.com/google/ffn',

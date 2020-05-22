@@ -86,6 +86,8 @@ def evaluate_segmentation_result(reseg, dels, moves, delta, analysis_r,
     result.deleted_voxels = int(np.sum(dels[mask]))
 
   result.num_voxels = int(np.sum(reseg))
+  # logging.warning('seg1 %s', np.sum(seg1))
+  # logging.warning('reseg %s', np.sum(reseg[seg1]))
   result.segment_a_consistency = float(
       np.sum(reseg[seg1])) / np.sum(seg1)
   result.segment_b_consistency = float(

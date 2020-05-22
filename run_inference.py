@@ -25,6 +25,7 @@ import time
 from google.protobuf import text_format
 from absl import app
 from absl import flags
+import tensorflow as tf
 gfile = tf.io.gfile
 
 from ffn.utils import bounding_box_pb2

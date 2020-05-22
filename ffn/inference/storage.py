@@ -111,7 +111,7 @@ def decorated_volume(settings, **kwargs):
     else:
       mip = 0
     c_vol = cloudvolume.CloudVolume('file://%s' % settings.precomputed, 
-      mip=mip, parallel=False, progress=False)
+      mip=mip, parallel=False, progress=False, bounded=False, fill_missing=True)
     volume = TransposedCloudVolume(c_vol, transpose=transpose)
 
   else:
