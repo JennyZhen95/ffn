@@ -78,11 +78,14 @@ def main(argv):
     for i, partvol in enumerate(FLAGS.partition_volumes):
       name, path, dataset = partvol.split(':')
       with h5py.File(path, 'r') as f:
-        partitions = f[dataset][mz:-mz, my:-my, mx:-mx]
+        ds_shape = f[dataset].shape
+        partitions = f[dataset][mz:ds_shape[0]-mz, my:ds_shape[1]-my, mx:ds_shape[2]-mx]
+        print(partitions.shape)
         vol_shapes.append(partitions.shape)
         vol_labels.append(name)
 
         uniques, counts = np.unique(partitions, return_counts=True)
+        # print(uniques, counts)
         for val, cnt in zip(uniques, counts):
           if val == IGNORE_PARTITION:
             continue
@@ -98,41 +101,21 @@ def main(argv):
     for k, v in totals.items():
       logging.info(' %d: %d', k, v)
 
-    # check time
-    # logging.info('indices %s', str(indices[3][0:100]))
-    # test_output = np.resize(indices[3][0:100], (1000,2))
-    # logging.info('resampled %s', str(test_output))
 
     max_count = max(totals.values())
-    # keys = list(totals.keys())
-    # keys.sort()
-
-    # logging.info(keys)
-    # indices_list = [ indices[k] for k in keys ]
-    # print(len(indices_list))
-
-    #indices = np.concatenate(
-    #    [np.resize(np.random.permutation(v), (max_count, 2)) for
-    #    v in tqdm(indices.values())], axis=0)
-    #indices_list = [[np.resize(np.random.permutation(v), (max_count, 2)) for
-    #    v in tqdm(indices.values())]
 
     indices_list = []
-    #max_count = FLAGS.max_samples
     for v in tqdm(indices.values()):
       if len(v) < FLAGS.max_samples:
         indices_list.append( np.resize(np.random.permutation(v), (FLAGS.max_samples, 2)))
       else:
         indices_list.append( np.stack([v[i] for i in np.random.choice(len(v), FLAGS.max_samples, False)], 0))
-      #logging.info(indices_list[-1].shape)
         
     indices = np.concatenate(indices_list, 0)
     np.random.shuffle(indices)
     logging.info('length %s', indices.shape)
     logging.info('Finished.')
     subset_indices = np.array_split(indices, mpi_size)
-    #logging.info('size %s', subset_indices[0].shape)
-    #indices_subset = indices[0]
   else:
     subset_indices =  None
     vol_shapes = None
@@ -143,7 +126,6 @@ def main(argv):
 
 
   subset_indices = mpi_comm.scatter(subset_indices, 0)
-  #indices_list = mpi_comm.scatter(indices_list, 0)
   vol_shapes = mpi_comm.bcast(vol_shapes, 0)
   vol_labels = mpi_comm.bcast(vol_labels, 0)
   mx = mpi_comm.bcast(mx, 0)

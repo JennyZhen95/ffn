@@ -562,7 +562,7 @@ def h5_distributed_dataset(model, queue_batch=None, rank=0):
   logging.info('fnames %s', fnames)
   ds = tf.data.TFRecordDataset(fnames, compression_type='GZIP')
   #ds = tf.data.TFRecordDataset([FLAGS.train_coords], compression_type='GZIP')
-  ds = ds.map(parser, num_parallel_calls=40)
+  ds = ds.map(parser, num_parallel_calls=40).repeat()
   ds.prefetch(1000)
   ds = ds.shard(hvd.size(), hvd.rank())
 
@@ -859,7 +859,7 @@ def train_ffn(model_cls, **model_kwargs):
         is_chief=(FLAGS.task == 0),
         checkpoint_dir=checkpoint_dir,
         hooks=hooks,
-        save_checkpoint_secs=30,
+        save_checkpoint_secs=300,
         save_summaries_steps=None,
         config=config,
         scaffold=scaffold) as sess:
