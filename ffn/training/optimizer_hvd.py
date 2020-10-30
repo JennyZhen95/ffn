@@ -19,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
+import horovod.tensorflow as hvd
 
 from absl import flags
 
@@ -60,3 +61,24 @@ def optimizer_from_flags():
   else:
     raise ValueError('Unknown optimizer: %s' % FLAGS.optimizer)
 
+
+def hvd_optimizer_from_flags():
+  lr = FLAGS.learning_rate * hvd.size()
+  if FLAGS.optimizer == 'momentum':
+    opt = tf.compat.v1.train.MomentumOptimizer(lr, FLAGS.momentum)
+  elif FLAGS.optimizer == 'sgd':
+    opt = tf.compat.v1.train.GradientDescentOptimizer(lr)
+  elif FLAGS.optimizer == 'adagrad':
+    opt = tf.compat.v1.train.AdagradOptimizer(lr)
+  elif FLAGS.optimizer == 'adam':
+    opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr,
+                                  beta1=FLAGS.adam_beta1,
+                                  beta2=FLAGS.adam_beta2,
+                                  epsilon=FLAGS.epsilon)
+  elif FLAGS.optimizer == 'rmsprop':
+    opt = tf.compat.v1.train.RMSPropOptimizer(lr, FLAGS.rmsprop_decay,
+                                    momentum=FLAGS.momentum,
+                                    epsilon=FLAGS.epsilon)
+  else:
+    raise ValueError('Unknown optimizer: %s' % FLAGS.optimizer)
+  return hvd.DistributedOptimizer(opt)

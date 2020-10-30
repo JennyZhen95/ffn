@@ -140,7 +140,7 @@ class FFNModel(object):
       loss = self.loss
     tf.compat.v1.summary.scalar('optimizer_loss', self.loss)
 
-    opt = optimizer.optimizer_from_flags()
+    opt = optimizer.hvd_optimizer_from_flags()
     grads_and_vars = opt.compute_gradients(loss)
 
     for g, v in grads_and_vars:
