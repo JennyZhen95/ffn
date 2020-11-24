@@ -380,7 +380,7 @@ class Canvas(object):
       # Top-left corner of the FoV.
       start = np.array(pos) - self.margin
       end = start + self._input_image_size
-      img = self.image[[slice(s, e) for s, e in zip(start, end)]]
+      img = self.image[tuple([slice(s, e) for s, e in zip(start, end)])]
 
       # Record the amount of time spent on non-prediction tasks.
       if self.t_last_predict is not None:
@@ -419,7 +419,7 @@ class Canvas(object):
       start = np.array(pos) - off
       end = start + self._input_seed_size
       logit_seed = np.array(
-          self.seed[[slice(s, e) for s, e in zip(start, end)]])
+          self.seed[tuple([slice(s, e) for s, e in zip(start, end)])])
       init_prediction = np.isnan(logit_seed)
       logit_seed[init_prediction] = np.float32(self.options.pad_value)
 
@@ -452,7 +452,7 @@ class Canvas(object):
       # disconnectedness predictions in the course of inference.
       if self.options.disco_seed_threshold >= 0:
         th_max = logit(0.5)
-        old_seed = self.seed[sel]
+        old_seed = self.seed[tuple(sel)]
 
         if self._keep_history:
           self.history_deleted.append(
@@ -470,7 +470,7 @@ class Canvas(object):
           logits[mask] = old_seed[mask]
 
       # Update working space.
-      self.seed[sel] = logits
+      self.seed[tuple(sel)] = logits
 
     return logits
 
@@ -586,7 +586,7 @@ class Canvas(object):
         # Too close to an existing segment?
         low = np.array(pos) - mbd
         high = np.array(pos) + mbd + 1
-        sel = [slice(s, e) for s, e in zip(low, high)]
+        sel = tuple([slice(s, e) for s, e in zip(low, high)])
         if np.any(self.segmentation[sel] > 0):
           logging.debug('Too close to existing segment.')
           self.segmentation[pos] = -1
@@ -619,9 +619,9 @@ class Canvas(object):
         # covering the area that was actually changed by the FFN. In case the
         # segment is going to be rejected due to small size, this can
         # significantly reduce processing time.
-        sel = [slice(max(s, 0), e + 1) for s, e in zip(
+        sel = tuple([slice(max(s, 0), e + 1) for s, e in zip(
             self._min_pos - self._pred_size // 2,
-            self._max_pos + self._pred_size // 2)]
+            self._max_pos + self._pred_size // 2)])
 
         # We only allow creation of new segments in areas that are currently
         # empty.
