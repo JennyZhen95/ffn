@@ -854,8 +854,6 @@ class Runner(object):
   def __init__(self, use_cpu=False, use_gpu=None):
     self.counters = inference_utils.Counters()
     self.executor = None
-    self.use_cpu = use_cpu
-    self.use_gpu = use_gpu
 
   def __del__(self):
     self.stop_executor()
@@ -941,15 +939,7 @@ class Runner(object):
     self.stop_executor()
 
     if session is None:
-      if self.use_cpu:
-        config = tf.compat.v1.ConfigProto(
-          device_count={'GPU': 0})
-      elif self.use_gpu is not None:
-        gpu_options = tf.compat.v1.GPUOptions(visible_device_list=self.use_gpu, allow_growth=True)
-        config=tf.compat.v1.ConfigProto(gpu_options=gpu_options)
-      else:
-        config = tf.compat.v1.ConfigProto()
-        config.gpu_options.allow_growth = True
+      config = tf.compat.v1.ConfigProto()
       tf.compat.v1.reset_default_graph()
       session = tf.compat.v1.Session(config=config)
     self.session = session
